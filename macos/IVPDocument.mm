@@ -137,8 +137,8 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     NSMutableArray *tmp = [NSMutableArray array];
     for (NSString *n in names) {
         NSURL *u = [dir URLByAppendingPathComponent:n];
-        NSNumber *isDir;
-        if ([fm getResourceValue:&isDir forKey:NSURLIsDirectoryKey error:nil] && isDir.boolValue) continue;
+        NSNumber *isDir = nil;
+        if ([u getResourceValue:&isDir forKey:NSURLIsDirectoryKey error:nil] && isDir.boolValue) continue;
         if (IVPIsImageURL(u)) [tmp addObject:u];
     }
     [tmp sortUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
