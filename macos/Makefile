@@ -13,7 +13,7 @@ OUT_DIR    := build
 APP        := $(OUT_DIR)/ImageViewerPro.app
 BIN        := $(APP)/Contents/MacOS/ImageViewerPro
 
-SRCS := main.mm IVPDocument.mm IVPImageView.mm IVPWindow.mm
+SRCS := main.mm IVPDocument.mm IVPImageView.mm IVPWindow.mm IVPRibbon.mm
 OBJS := $(SRCS:%.mm=$(OUT_DIR)/%.o)
 
 .PHONY: all clean run

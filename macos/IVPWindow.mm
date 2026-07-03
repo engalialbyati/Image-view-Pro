@@ -1,7 +1,8 @@
-﻿// IVPWindow.mm â€” assembles toolbar, sidebar (thumbnails), image view, status bar.
+﻿// IVPWindow.mm — assembles ribbon, sidebar (thumbnails), image view, status bar.
 #import "IVPWindow.h"
 #import "IVPDocument.h"
 #import "IVPImageView.h"
+#import "IVPRibbon.h"
 
 static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *tip) {
     NSButton *b = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:tip]
@@ -104,8 +105,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 @property (nonatomic, strong) IVPSidebar *sidebar;
 @property (nonatomic, strong) NSScrollView *sidebarScroll;
 @property (nonatomic, strong) IVPStatus *status;
-@property (nonatomic, strong) NSView *topBar;
-@property (nonatomic, strong) NSButton *selectBtn;
+@property (nonatomic, strong) IVPRibbon *ribbon;
 @property (nonatomic, strong) NSView *adjustPanel;
 @property (nonatomic, strong) NSMutableArray<NSTextField *> *adjLabels;
 @property (nonatomic, strong) NSMutableArray<NSTextField *> *adjValues;
@@ -138,34 +138,15 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 
     _status = [[IVPStatus alloc] initWithFrame:NSMakeRect(0, 0, 100, 24)];
 
-    _topBar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 52)];
-
-    NSButton *openB   = IVPMakeBtn(@selector(doOpen:),    self, @"folder",            @"Open");
-    NSButton *prevB   = IVPMakeBtn(@selector(doPrev:),    self, @"chevron.left",      @"Previous");
-    NSButton *nextB   = IVPMakeBtn(@selector(doNext:),    self, @"chevron.right",     @"Next");
-    NSButton *rotL    = IVPMakeBtn(@selector(doRotL:),    self, @"rotate.left",       @"Rotate Left");
-    NSButton *rotR    = IVPMakeBtn(@selector(doRotR:),    self, @"rotate.right",      @"Rotate Right");
-    NSButton *undoB   = IVPMakeBtn(@selector(doUndo:),    self, @"arrow.uturn.backward", @"Undo");
-    NSButton *redoB   = IVPMakeBtn(@selector(doRedo:),    self, @"arrow.uturn.forward",  @"Redo");
-    NSButton *fitB    = IVPMakeBtn(@selector(doFit:),     self, @"arrow.up.left.and.arrow.down.right", @"Fit");
-    _selectBtn        = IVPMakeBtn(@selector(doSelect:),  self, @"checkmark.circle",  @"Select / Deselect");
-    NSButton *pdfB    = IVPMakeBtn(@selector(doPDF:),     self, @"doc.richtext",      @"Export selected as PDF");
-    NSButton *delB    = IVPMakeBtn(@selector(doDelete:),  self, @"trash",             @"Delete (Trash)");
-    NSButton *editB   = IVPMakeBtn(@selector(doEdit:),    self, @"slider.horizontal.3", @"Adjust Photo");
-    NSButton *scanB   = IVPMakeBtn(@selector(doScan:),    self, @"doc.viewfinder",    @"Scan Document");
-    NSButton *cropB   = IVPMakeBtn(@selector(doCropRect:),  self, @"crop",             @"Crop (Rectangle)");
-    NSButton *cropPB  = IVPMakeBtn(@selector(doCropPersp:), self, @"viewfinder",      @"Crop (Perspective)");
-    NSArray *btns = @[openB, prevB, nextB, rotL, rotR, editB, scanB, cropB, cropPB, fitB, undoB, redoB, _selectBtn, pdfB, delB];
-    for (NSButton *b in btns) [b setButtonType:NSButtonTypeMomentaryChange];
-    [_topBar addSubview:openB];
-    [self layoutToolbar:btns];
+    _ribbon = [[IVPRibbon alloc] initWithFrame:NSMakeRect(0, 0, 100, 102)];
+    _ribbon.target = self;
 
     [self buildAdjustPanel];
     [self buildScanBar];
     _adjustPanel.hidden = YES;
     _scanBar.hidden = YES;
 
-    [self.contentView addSubview:_topBar];
+    [self.contentView addSubview:_ribbon];
     [self.contentView addSubview:_sidebarScroll];
     [self.contentView addSubview:_image];
     [self.contentView addSubview:_adjustPanel];
@@ -176,15 +157,6 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(zoomChanged) name:@"IVPZoomChanged" object:_image];
     [self updateStatus];
-}
-
-- (void)layoutToolbar:(NSArray *)btns {
-    CGFloat x = 12, y = 8, gap = 6;
-    for (NSButton *b in btns) {
-        NSSize s = [b fittingSize]; if (s.width < 30) s.width = 30;
-        b.frame = NSMakeRect(x, y, MAX(s.width, 36), 36);
-        x += MAX(s.width, 36) + gap;
-    }
 }
 
 static NSArray<NSString *> *IVPAdjNames() {
@@ -232,12 +204,12 @@ static NSArray<NSString *> *IVPAdjNames() {
 
 - (void)layout {
     NSRect b = self.contentView.bounds;
-    CGFloat tb = 52, st = 24, side = (_sidebarScroll.hidden ? 0 : 220);
+    CGFloat tb = _ribbon.ribbonHeight, st = 24, side = (_sidebarScroll.hidden ? 0 : 220);
     BOOL editing = _document.editing, scanning = _document.scanning;
     CGFloat editW = editing ? 240 : 0;
     CGFloat scanH = scanning ? 40 : 0;
 
-    _topBar.frame = NSMakeRect(0, NSHeight(b) - tb, NSWidth(b), tb);
+    _ribbon.frame = NSMakeRect(0, NSHeight(b) - tb, NSWidth(b), tb);
     CGFloat contentBottom = st + scanH;
     CGFloat contentTop = NSHeight(b) - tb;
     _sidebarScroll.frame = NSMakeRect(0, contentBottom, side, contentTop - contentBottom);
@@ -277,6 +249,10 @@ static NSArray<NSString *> *IVPAdjNames() {
 - (void)doRedo:(id)s { (void)s; [_document redo]; }
 - (void)doFit:(id)s  { (void)s; [_image fitToWindow]; [self updateStatus]; }
 - (void)doSelect:(id)s { (void)s; [_document toggleSelectCurrent]; }
+- (void)doSelectAll:(id)s { (void)s; [_document selectAll]; }
+- (void)doClearSel:(id)s { (void)s; [_document clearSelection]; }
+- (void)doZoomIn:(id)s { (void)s; [_image zoomBy:1.2]; }
+- (void)doZoomOut:(id)s { (void)s; [_image zoomBy:1.0/1.2]; }
 - (void)doPDF:(id)s  { (void)s; [_document exportSelectionToPDF]; }
 - (void)doDelete:(id)s { (void)s; [_document deleteSelection]; }
 - (void)doEdit:(id)s { (void)s; [_document enterEdit]; }
@@ -323,7 +299,6 @@ static NSArray<NSString *> *IVPAdjNames() {
     (void)doc;
     [_sidebar reload];
     [self layout];
-    [self updateSelectButton];
     [self updateStatus];
 }
 - (void)zoomChanged { [self updateStatus]; }
@@ -336,11 +311,6 @@ static NSArray<NSString *> *IVPAdjNames() {
         if (c == NSRightArrowFunctionKey) { [_document goNext]; return; }
     }
     [super keyDown:e];
-}
-
-- (void)updateSelectButton {
-    if (_document.isCurrentSelected) _selectBtn.contentTintColor = [NSColor systemBlueColor];
-    else _selectBtn.contentTintColor = [NSColor labelColor];
 }
 
 - (void)updateStatus {

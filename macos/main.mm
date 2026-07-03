@@ -62,8 +62,8 @@
     [editMenu addItemWithTitle:@"Redo" action:@selector(doRedo:) keyEquivalent:@"y"].target = self.window;
     [editMenu addItem:NSMenuItem.separatorItem];
     [editMenu addItemWithTitle:@"Select / Deselect" action:@selector(doSelect:) keyEquivalent:@"s"].target = self.window;
-    [editMenu addItemWithTitle:@"Select All" action:@selector(selectAllDoc:) keyEquivalent:@"a"].target = self.window;
-    [editMenu addItemWithTitle:@"Clear Selection" action:@selector(clearSel:) keyEquivalent:@"d"].target = self.window;
+    [editMenu addItemWithTitle:@"Select All" action:@selector(doSelectAll:) keyEquivalent:@"a"].target = self.window;
+    [editMenu addItemWithTitle:@"Clear Selection" action:@selector(doClearSel:) keyEquivalent:@"d"].target = self.window;
     editItem.submenu = editMenu;
 
     NSMenuItem *imgItem = [main addItemWithTitle:@"Image" action:nil keyEquivalent:@""];
@@ -83,8 +83,8 @@
     NSMenuItem *viewItem = [main addItemWithTitle:@"View" action:nil keyEquivalent:@""];
     NSMenu *viewMenu = [NSMenu new];
     [viewMenu addItemWithTitle:@"Fit to Window" action:@selector(doFit:) keyEquivalent:@"0"].target = self.window;
-    [viewMenu addItemWithTitle:@"Zoom In" action:@selector(zoomIn:) keyEquivalent:@"+"].target = self.window;
-    [viewMenu addItemWithTitle:@"Zoom Out" action:@selector(zoomOut:) keyEquivalent:@"-"].target = self.window;
+    [viewMenu addItemWithTitle:@"Zoom In" action:@selector(doZoomIn:) keyEquivalent:@"+"].target = self.window;
+    [viewMenu addItemWithTitle:@"Zoom Out" action:@selector(doZoomOut:) keyEquivalent:@"-"].target = self.window;
     viewItem.submenu = viewMenu;
 }
 - (void)selectAllDoc:(id)s { (void)s; [self.window.document selectAll]; }
