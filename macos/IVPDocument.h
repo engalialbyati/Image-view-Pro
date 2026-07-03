@@ -63,7 +63,9 @@
 // perspective corner access (image coords), settable by the view
 - (double)cornerX:(int)i;
 - (double)cornerY:(int)i;
-- (void)setCornerX:(int)i y:(double)y x:(double)x;
+- (void)setCornerX:(int)i x:(double)x y:(double)y;
+- (double)rcX0; - (double)rcY0; - (double)rcX1; - (double)rcY1;
+- (void)setRectCropX0:(double)x0 y0:(double)y0 x1:(double)x1 y1:(double)y1;
 - (NSArray<NSURL *> *)selectedURLsSorted;
 - (NSImage *)thumbnailForURL:(NSURL *)url maxSize:(CGFloat)s; // cached, for sidebar
 @end

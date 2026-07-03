@@ -124,8 +124,9 @@ struct IVPGeom { double baseX, baseY, dw, dh, scale; int iw, ih; };
             CGContextScaleCTM(ctx, 1, -1);
             CGContextDrawImage(ctx, CGRectMake((CGFloat)g.baseX, 0, (CGFloat)g.dw, (CGFloat)g.dh), _document.displayImage);
             CGContextRestoreGState(ctx);
-            CGContextStrokeRectWithColor(ctx, NSRectToCGRect(rr), [NSColor systemBlueColor].CGColor);
-            CGContextSetLineWidth(ctx, 2); CGContextStrokeRect(ctx, NSRectToCGRect(rr));
+            CGContextSetRGBStrokeColor(ctx, 0.29, 0.57, 1.0, 1.0);
+            CGContextSetLineWidth(ctx, 2);
+            CGContextStrokeRect(ctx, NSRectToCGRect(rr));
         }
     }
     CGContextRestoreGState(ctx);
