@@ -1,4 +1,4 @@
-// IVPWindow.mm — assembles toolbar, sidebar (thumbnails), image view, status bar.
+﻿// IVPWindow.mm â€” assembles toolbar, sidebar (thumbnails), image view, status bar.
 #import "IVPWindow.h"
 #import "IVPDocument.h"
 #import "IVPImageView.h"
@@ -104,7 +104,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 @property (nonatomic, strong) IVPSidebar *sidebar;
 @property (nonatomic, strong) NSScrollView *sidebarScroll;
 @property (nonatomic, strong) IVPStatus *status;
-@property (nonatomic, strong) NSView *toolbar;
+@property (nonatomic, strong) NSView *topBar;
 @property (nonatomic, strong) NSButton *selectBtn;
 @end
 @implementation IVPWindow
@@ -132,7 +132,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 
     _status = [[IVPStatus alloc] initWithFrame:NSMakeRect(0, 0, 100, 24)];
 
-    _toolbar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 52)];
+    _topBar = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 52)];
 
     NSButton *openB   = IVPMakeBtn(@selector(doOpen:),    self, @"folder",            @"Open");
     NSButton *prevB   = IVPMakeBtn(@selector(doPrev:),    self, @"chevron.left",      @"Previous");
@@ -147,10 +147,10 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
     NSButton *delB    = IVPMakeBtn(@selector(doDelete:),  self, @"trash",             @"Delete (Trash)");
     NSArray *btns = @[openB, prevB, nextB, rotL, rotR, undoB, redoB, fitB, _selectBtn, pdfB, delB];
     for (NSButton *b in btns) [b setButtonType:NSButtonTypeMomentaryChange];
-    [_toolbar addSubview:openB];
+    [_topBar addSubview:openB];
     [self layoutToolbar:btns];
 
-    [self.contentView addSubview:_toolbar];
+    [self.contentView addSubview:_topBar];
     [self.contentView addSubview:_sidebarScroll];
     [self.contentView addSubview:_image];
     [self.contentView addSubview:_status];
@@ -173,7 +173,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 - (void)layout {
     NSRect b = self.contentView.bounds;
     CGFloat tb = 52, st = 24, side = (_sidebarScroll.hidden ? 0 : 220);
-    _toolbar.frame = NSMakeRect(0, NSHeight(b) - tb, NSWidth(b), tb);
+    _topBar.frame = NSMakeRect(0, NSHeight(b) - tb, NSWidth(b), tb);
     _status.frame  = NSMakeRect(0, 0, NSWidth(b), st);
     _sidebarScroll.frame = NSMakeRect(0, st, side, NSHeight(b) - tb - st);
     _image.frame = NSMakeRect(side, st, NSWidth(b) - side, NSHeight(b) - tb - st);
@@ -233,27 +233,24 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 }
 
 - (void)updateStatus {
-    NSString *left = @"Ready — File > Open, or drag an image into the window";
+    NSString *left = @"Ready â€” File > Open, or drag an image into the window";
     if (_document.hasImage) {
         if (_document.isCurrentSelected) left = @"Selected";
         else left = @"Open";
     }
     NSString *right = @"";
     if (_document.hasImage) {
-        right = [NSString stringWithFormat:@"%d × %d    %.0f%%",
+        right = [NSString stringWithFormat:@"%d Ã— %d    %.0f%%",
                  _document.imageW, _document.imageH, _image.zoomPercent];
         if (_document.selectionCount > 0)
-            right = [NSString stringWithFormat:@"● %lu selected    %@", (unsigned long)_document.selectionCount, right];
+            right = [NSString stringWithFormat:@"â— %lu selected    %@", (unsigned long)_document.selectionCount, right];
     }
     _status.left = left; _status.right = right;
     [_status setNeedsDisplay:YES];
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-    NSPasteboard *pb = [sender draggingPasteboard];
-    NSString *path = [pb.stringForType:NSFileURLType] ?: [pb.stringForType:@"public.file-url"];
-    if (path) { [_document openURL:[NSURL URLWithString:path]]; return YES; }
-    NSURL *u = [NSURL URLFromPasteboard:pb];
+    NSURL *u = [NSURL URLFromPasteboard:[sender draggingPasteboard]];
     if (u) { [_document openURL:u]; return YES; }
     return NO;
 }

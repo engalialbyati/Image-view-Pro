@@ -5,5 +5,6 @@
 @property (nonatomic, weak) IVPDocument *document;
 - (void)fitToWindow;
 - (void)zoomBy:(double)f;
+- (void)documentChanged;
 - (double)zoomPercent;
 @end
