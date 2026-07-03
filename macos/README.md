@@ -4,11 +4,13 @@ A native macOS build of Image Viewer Pro, written in Objective-C++ on AppKit /
 CoreGraphics / ImageIO, and sharing the same portable C++ image-processing core
 (`../core/ImageCore.h`) as the Windows build.
 
-> The Windows build remains the fully-featured reference. This macOS port
-> currently implements: open, folder navigation, rotate, zoom/pan, selection
-> with a thumbnail sidebar, move-to-Trash, multi-image **Export as PDF**, and
-> undo/redo. Perspective crop, document-scan, and the adjustments panel exist in
-> the core and are pending UI wiring.
+> The Windows build remains the fully-featured reference. The macOS port shares
+> the same portable C++ core and now matches the main image-editing features:
+> open, folder navigation, rotate, **Adjust photo** (sliders), **Scan document**,
+> **Crop** (rectangle + perspective), zoom/pan, selection with a thumbnail
+> sidebar, move-to-Trash, multi-image **Export as PDF**, and undo/redo.
+> The chrome is a native Mac toolbar rather than a Windows-style ribbon, and
+> hotkey settings / event log / set-as-default are not yet ported.
 
 ## Install (first time on macOS)
 
