@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Image Viewer Pro</string>
+    <key>CFBundleDisplayName</key>
+    <string>Image Viewer Pro</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.engalialbyati.imageviewerpro</string>
+    <key>CFBundleVersion</key>
+    <string>1.2.3</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.2.3</string>
+    <key>CFBundleExecutable</key>
+    <string>ImageViewerPro</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Image Viewer Pro needs access to open images.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.jpeg</string>
+                <string>public.png</string>
+                <string>com.compuserve.gif</string>
+                <string>com.microsoft.bmp</string>
+                <string>public.tiff</string>
+                <string>org.webmproject.webp</string>
+                <string>public.heic</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

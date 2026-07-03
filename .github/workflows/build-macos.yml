@@ -1,0 +1,30 @@
+name: Build (macOS)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'macos/**'
+      - '.github/workflows/build-macos.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS app
+        run: make -C macos
+      - name: Smoke test (launch + quit)
+        run: |
+          set -e
+          APP="macos/build/ImageViewerPro.app"
+          ls -la "$APP/Contents/MacOS"
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageViewerPro-macOS
+          path: macos/build/ImageViewerPro.app

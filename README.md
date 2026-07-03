@@ -33,6 +33,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 Outputs `Image Viewer Pro.exe`.
 
+> **macOS:** a native AppKit port lives in [`macos/`](macos/README.md). It shares
+> the portable C++ core in [`core/ImageCore.h`](core/ImageCore.h). Build on a Mac
+> with `cd macos && make`.
+
 ## Default shortcuts
 
 | Action | Key |
