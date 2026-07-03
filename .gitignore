@@ -1,0 +1,12 @@
+# Build outputs
+*.exe
+*.o
+*.obj
+*.res
+/dist/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+*.user
+.vs/
