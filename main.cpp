@@ -56,6 +56,10 @@
 #define ID_UPDATE      1023
 #define ID_REDO        1024
 #define ID_EVENTLOG    1025
+#define ID_EXPORTPDF   1026
+#define ID_DELETE      1027
+#define ID_COPY        1028
+#define ID_CUT         1029
 #define IDC_ADJLBL     5000
 #define IDC_ADJVAL     5100
 #define IDC_ADJTRK     5200
@@ -77,6 +81,20 @@
 #define IC_ZOUT 6
 #define IC_ZFIT 7
 #define IC_ZIN  8
+#define IC_OPEN 9
+#define IC_SAVE 10
+#define IC_UNDO 11
+#define IC_REDO 12
+#define IC_COPY 13
+#define IC_CUT  14
+#define IC_SELECT 15
+#define IC_SELALL 16
+#define IC_CLEAR 17
+#define IC_FOLDER 18
+#define IC_ADJUST 19
+#define IC_SCAN 20
+#define IC_PDF 21
+#define IC_DELETE 22
 
 enum { ACT_RENAME, ACT_SELECT, ACT_SELECTALL, ACT_CLEARSEL, ACT_COPY, ACT_CUT,
        ACT_ROTATER, ACT_ROTATEL, ACT_PREV, ACT_NEXT, ACT_ZOOMIN, ACT_ZOOMOUT,
@@ -113,32 +131,38 @@ static const WCHAR* const g_imageExts[] = {
     L".tif", L".tiff", L".webp", L".svg", L".ico", L".heic", L".heif", L".wmf", L".emf"
 };
 
-static const WCHAR* const APP_VERSION  = L"1.1.0";
+static const WCHAR* const APP_VERSION  = L"1.2.0";
 static const WCHAR* const GH_API       = L"https://api.github.com/repos/engalialbyati/Image-view-Pro/releases/latest";
 static const WCHAR* const GH_RELEASES  = L"https://github.com/engalialbyati/Image-view-Pro/releases";
 static std::wstring g_updTag, g_updUrl;
 
-static const Gdiplus::Color C_BG(255, 16, 16, 24);
-static const Gdiplus::Color C_BAR(255, 26, 26, 38);
-static const Gdiplus::Color C_BAR2(255, 32, 32, 48);
-static const Gdiplus::Color C_BTN(255, 46, 46, 66);
-static const Gdiplus::Color C_BTNHOV(255, 64, 64, 96);
-static const Gdiplus::Color C_ACCENT(255, 90, 146, 255);
-static const Gdiplus::Color C_ACCENT2(255, 116, 168, 255);
-static const Gdiplus::Color C_TEXT(255, 238, 239, 247);
-static const Gdiplus::Color C_DIM(255, 138, 140, 162);
-static const Gdiplus::Color C_SEP(255, 52, 52, 74);
+// ---- Professional dark theme: layered neutral surfaces + vivid blue accent ----
+static const Gdiplus::Color C_CANVAS (255, 13, 14, 18);     // image backdrop (darkest)
+static const Gdiplus::Color C_STATUS (255, 16, 17, 22);
+static const Gdiplus::Color C_PANEL  (255, 20, 21, 27);     // selection panel
+static const Gdiplus::Color C_STRIP  (255, 25, 26, 32);     // tab strip
+static const Gdiplus::Color C_RIBBON1(255, 34, 35, 46);     // ribbon gradient top
+static const Gdiplus::Color C_RIBBON2(255, 26, 27, 35);     // ribbon gradient bottom
+static const Gdiplus::Color C_NAMEBAR(255, 21, 22, 29);
+static const Gdiplus::Color C_CARD   (255, 29, 30, 39);     // chips / thumbnail cards
+static const Gdiplus::Color C_BTNHOV (255, 48, 50, 64);     // control hover fill
+static const Gdiplus::Color C_ACCENT (255, 74, 138, 255);
+static const Gdiplus::Color C_ACCENT2(255, 112, 167, 255);
+static const Gdiplus::Color C_TEXT   (255, 235, 237, 243);
+static const Gdiplus::Color C_DIM    (255, 166, 170, 182);  // secondary text
+static const Gdiplus::Color C_MUTED  (255, 116, 120, 134);  // group labels / hints
+static const Gdiplus::Color C_LINE   (255, 40, 41, 50);     // hairline separators
+static const Gdiplus::Color C_BORDER (255, 54, 56, 68);     // card / hover borders
 
 static HINSTANCE g_hInst = nullptr;
 static HWND      g_hMain = nullptr;
 static HWND      g_hEdit = nullptr;
-static HWND      g_hCheck = nullptr;
 static HFONT     g_hFont = nullptr;
 static HFONT     g_hFontBold = nullptr;
 static HFONT     g_hFontName = nullptr;
+static HFONT     g_hFontSmall = nullptr;
 static HBRUSH    g_hbrChip = nullptr;
 static HBRUSH    g_hbrPanel = nullptr;
-static HWND      g_btn[16] = {0};
 static HWND      g_hoverBtn = nullptr;
 static HMENU     g_hMenu = nullptr;
 
@@ -192,10 +216,13 @@ static double g_ox = 0, g_oy = 0, g_scale = 1;
 static HBITMAP g_dispCache = nullptr;
 static int g_cacheW = 0, g_cacheH = 0;
 static int g_canvasTop = 0, g_canvasLeft = 0, g_canvasW = 0, g_canvasH = 0;
-static int g_tbh = 64;
+static int g_tabH = 0, g_ribbonH = 0, g_nameBarH = 0;
+static int g_topChrome = 0;
+static int g_selPanelW = 0;
+static int g_selContentTop = 0;
 static int g_statusH = 0, g_statusTop = 0;
 static double g_dpi = 96.0;
-static RECT g_chipRect = {0,0,0,0};
+static RECT g_nameChip = {0,0,0,0};
 
 static std::wstring g_sLeft, g_sRight;
 static std::wstring g_openOnStart;
@@ -208,23 +235,101 @@ static int g_captureIdx = -1;
 static HWND g_hkBtn[ACT_COUNT];
 static HWND g_label[ACT_COUNT];
 
-struct BtnDef { const WCHAR* text; int id; int w; bool primary; bool icon; int iconId; bool groupStart; };
-static BtnDef g_btns[] = {
-    { L"Open",   ID_OPEN,   82, false, false, IC_NONE, true  },
-    { L"",       ID_PREV,   42, false, true,  IC_PREV, true  },
-    { L"",       ID_NEXT,   42, false, true,  IC_NEXT, false },
-    { L"",       ID_ROTL,   42, false, true,  IC_ROTL, true  },
-    { L"",       ID_ROTR,   42, false, true,  IC_ROTR, false },
-    { L"",       ID_CROP,   42, false, true,  IC_CROP, false },
-    { L"",       ID_ZOUT,   42, false, true,  IC_ZOUT, true  },
-    { L"",       ID_ZFIT,   46, false, true,  IC_ZFIT, false },
-    { L"",       ID_ZIN,    42, false, true,  IC_ZIN,  false },
-    { L"Edit",   ID_EDIT,   68, false, false, IC_NONE, true  },
-    { L"Scan",   ID_SCAN,   72, false, false, IC_NONE, false },
-    { L"Save",   ID_SAVE,   88, true,  false, IC_NONE, true  },
-    { L"Folder", ID_SHOWFOLDER, 78, false, false, IC_NONE, false },
+struct RItem { int id; int icon; const WCHAR* label; bool large; };
+struct RGroupDef { const WCHAR* name; const RItem* items; int count; };
+struct RTabDef { const WCHAR* name; const RGroupDef* groups; int count; };
+
+static const RItem g_homeFile[] = {
+    { ID_OPEN, IC_OPEN, L"Open", true },
+    { ID_SAVE, IC_SAVE, L"Save", true },
 };
-static const int g_nBtns = sizeof(g_btns) / sizeof(g_btns[0]);
+static const RItem g_homeClip[] = {
+    { ID_COPY,      IC_COPY,   L"Copy",        true },
+    { ID_CUT,       IC_CUT,    L"Cut",         true },
+    { IDC_CHECKSEL, IC_SELECT, L"Select",      false },
+    { ID_SELALL,    IC_SELALL, L"Select All",  false },
+    { ID_SELCLR,    IC_CLEAR,  L"Clear",       false },
+};
+static const RItem g_homeHist[] = {
+    { ID_UNDO, IC_UNDO, L"Undo", true },
+    { ID_REDO, IC_REDO, L"Redo", true },
+};
+static const RItem g_homeManage[] = {
+    { ID_EXPORTPDF, IC_PDF,    L"PDF",    true },
+    { ID_DELETE,    IC_DELETE, L"Delete", true },
+};
+static const RItem g_homeBrowse[] = {
+    { ID_PREV,       IC_PREV,   L"Previous", true },
+    { ID_NEXT,       IC_NEXT,   L"Next",     true },
+    { ID_SHOWFOLDER, IC_FOLDER, L"Folder",   false },
+};
+static const RGroupDef g_homeGroups[] = {
+    { L"File",      g_homeFile,   2 },
+    { L"Clipboard", g_homeClip,   5 },
+    { L"History",   g_homeHist,   2 },
+    { L"Manage",    g_homeManage, 2 },
+    { L"Browse",    g_homeBrowse, 3 },
+};
+
+static const RItem g_imgRotate[] = {
+    { ID_ROTL, IC_ROTL, L"Rotate Left",  true },
+    { ID_ROTR, IC_ROTR, L"Rotate Right", true },
+};
+static const RItem g_imgCrop[] = {
+    { ID_CROP,      IC_CROP, L"Rectangle",   true },
+    { ID_CROPPERSP, IC_CROP, L"Perspective", true },
+};
+static const RItem g_imgEnhance[] = {
+    { ID_EDIT, IC_ADJUST, L"Adjust", true },
+    { ID_SCAN, IC_SCAN,   L"Scan",   true },
+};
+static const RGroupDef g_imgGroups[] = {
+    { L"Rotate",  g_imgRotate,  2 },
+    { L"Crop",    g_imgCrop,    2 },
+    { L"Enhance", g_imgEnhance, 2 },
+};
+
+static const RItem g_viewZoom[] = {
+    { ID_ZIN,  IC_ZIN,  L"Zoom In",  true },
+    { ID_ZOUT, IC_ZOUT, L"Zoom Out", false },
+    { ID_ZFIT, IC_ZFIT, L"Fit",      false },
+};
+static const RItem g_viewBrowse[] = {
+    { ID_PREV, IC_PREV, L"Previous", true },
+    { ID_NEXT, IC_NEXT, L"Next",     true },
+};
+static const RGroupDef g_viewGroups[] = {
+    { L"Zoom",   g_viewZoom,   3 },
+    { L"Browse", g_viewBrowse, 2 },
+};
+
+static const RTabDef g_tabs[] = {
+    { L"Home",  g_homeGroups, 5 },
+    { L"Image", g_imgGroups,  3 },
+    { L"View",  g_viewGroups, 2 },
+};
+static const int g_nTabs = sizeof(g_tabs) / sizeof(g_tabs[0]);
+
+struct BtnDrawInfo { HWND hwnd; bool large; int icon; const WCHAR* label; int id; };
+static std::vector<BtnDrawInfo> g_btnDraw;
+struct CmdHwnd { int id; HWND hwnd; };
+static CmdHwnd g_cmds[48];
+static int g_nCmds = 0;
+static int g_activeTab = 0;
+static int g_hoverTab = -1;
+struct TabRectDef { RECT rc; const WCHAR* name; };
+static std::vector<TabRectDef> g_tabRects;
+
+struct SelThumb { std::wstring path; HBITMAP bmp; int w, h; };
+static std::vector<SelThumb> g_selThumbs;
+static int g_selScroll = 0;
+static int g_selMaxScroll = 0;
+static int g_selHover = -1;
+struct GroupLabelDef { RECT rc; const WCHAR* name; int sepX; };
+static std::vector<GroupLabelDef> g_groupLabels;
+static bool g_selDragScroll = false;
+static int g_selDragStartY = 0;
+static int g_selDragStartScroll = 0;
 
 static int DPI(int v) { return (int)(v * g_dpi / 96.0 + 0.5); }
 
@@ -332,6 +437,8 @@ static void DoSave();
 static void DoRotate(bool right);
 static void DoCropApply();
 static void ZoomBy(double f);
+static HWND HwndForCmd(int id);
+static void InvalidateSelBtn();
 static void DoUndo();
 static void DoRedo();
 static void PushHistoryEntry(Gdiplus::Bitmap* snap, const std::wstring& label);
@@ -348,6 +455,11 @@ static void RecomputeEditPreview();
 static void ShowEditPanel(bool show);
 static void Layout();
 static void DispatchAction(int act);
+static void RebuildSelectionThumbs();
+static void EnsureSelThumb(const std::wstring& path);
+static int  SelPanelItemAt(int x, int y);
+static void ExportSelectionPDF();
+static void DeleteSelected();
 static void OpenSettings();
 static void OpenEventLog();
 static void CheckForUpdatesNow();
@@ -366,17 +478,21 @@ static void UpdateTitle() {
     if (!g_path.empty()) { t += L"  \u2014  "; t += PathFindFileNameW(g_path.c_str()); }
     SetWindowTextW(g_hMain, t.c_str());
 }
+static void EnableBtn(int id, BOOL on) {
+    HWND h = GetDlgItem(g_hMain, id);
+    if (h && IsWindowEnabled(h) != on) EnableWindow(h, on);
+}
 static void EnableButtons(bool on) {
-    const int ids[] = { ID_SAVE, ID_ROTL, ID_ROTR, ID_CROP, ID_SCAN, ID_ZIN, ID_ZOUT, ID_ZFIT, ID_DEFAULT, ID_SELALL, ID_SELCLR, ID_UNDO };
-    for (auto id : ids) {
-        HWND h = GetDlgItem(g_hMain, id);
-        if (h) EnableWindow(h, on);
-    }
-    HWND hp = GetDlgItem(g_hMain, ID_PREV);
-    HWND hn = GetDlgItem(g_hMain, ID_NEXT);
+    const int ids[] = { ID_SAVE, ID_ROTL, ID_ROTR, ID_CROP, ID_CROPPERSP, ID_SCAN, ID_EDIT,
+                        ID_ZIN, ID_ZOUT, ID_ZFIT, ID_DEFAULT, ID_SELALL, ID_SELCLR, ID_UNDO, ID_REDO,
+                        IDC_CHECKSEL };
+    for (auto id : ids) EnableBtn(id, on ? TRUE : FALSE);
     BOOL nav = (g_files.size() > 1) ? TRUE : FALSE;
-    if (hp) EnableWindow(hp, nav && on);
-    if (hn) EnableWindow(hn, nav && on);
+    EnableBtn(ID_PREV, nav && on);
+    EnableBtn(ID_NEXT, nav && on);
+    bool haveSel = on && (!g_selected.empty() || !g_path.empty());
+    EnableBtn(ID_EXPORTPDF, haveSel ? TRUE : FALSE);
+    EnableBtn(ID_DELETE, (on && !g_selected.empty()) ? TRUE : FALSE);
 }
 
 static void RebuildFolderList() {
@@ -515,14 +631,14 @@ static bool LoadImageFromPath(const std::wstring& path) {
     SendMessageW(g_hEdit, EM_SETREADONLY, TRUE, 0);
 
     RebuildFolderList();
+    RebuildSelectionThumbs();
     g_eventLog.clear();
     AddEventLog(std::wstring(L"Opened: ") + PathFindFileNameW(path.c_str()));
     UpdateEditName();
     UpdateTitle();
     EnableButtons(true);
-    if (g_hCheck) InvalidateRect(g_hCheck, nullptr, FALSE);
     RebuildDisplayCache();
-    InvalidateRect(g_hMain, nullptr, FALSE);
+    InvalidateChrome();
     UpdateStatus();
     return true;
 }
@@ -576,7 +692,7 @@ static void RebuildDisplayCache() {
     int dw = (int)(iw * scale), dh = (int)(ih * scale);
     int ox = (cw - dw) / 2;
     int oy = (ch - dh) / 2;
-    g_ox = (double)ox; g_oy = (double)(g_canvasTop + oy); g_scale = scale;
+    g_ox = (double)(g_canvasLeft + ox); g_oy = (double)(g_canvasTop + oy); g_scale = scale;
     Gdiplus::Bitmap cache(cw, ch, PixelFormat32bppARGB);
     Gdiplus::Graphics gc(&cache);
     gc.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
@@ -1297,20 +1413,26 @@ static void ToggleSelectCurrent() {
     if (g_path.empty()) return;
     if (g_selected.count(g_path)) g_selected.erase(g_path);
     else g_selected.insert(g_path);
-    if (g_hCheck) InvalidateRect(g_hCheck, nullptr, FALSE);
+    RebuildSelectionThumbs();
+    EnableButtons(g_bmp != nullptr);
+    InvalidateSelBtn();
     InvalidateChrome();
     UpdateStatus();
 }
 static void SelectAll() {
     if (g_files.empty()) return;
     for (const auto& f : g_files) g_selected.insert(f);
-    if (g_hCheck) InvalidateRect(g_hCheck, nullptr, FALSE);
+    RebuildSelectionThumbs();
+    EnableButtons(g_bmp != nullptr);
+    InvalidateSelBtn();
     InvalidateChrome();
     UpdateStatus();
 }
 static void ClearSelection() {
     g_selected.clear();
-    if (g_hCheck) InvalidateRect(g_hCheck, nullptr, FALSE);
+    RebuildSelectionThumbs();
+    EnableButtons(g_bmp != nullptr);
+    InvalidateSelBtn();
     InvalidateChrome();
     UpdateStatus();
 }
@@ -1348,6 +1470,258 @@ static void CopySelectionToClipboard(bool cut) {
                       : (L"Copied " + std::to_wstring(g_selected.size()) + L" file(s) \u2014 paste in any folder");
         InvalidateChrome();
     }
+}
+
+static void FreeSelThumbs() {
+    for (auto& t : g_selThumbs) if (t.bmp) DeleteObject(t.bmp);
+    g_selThumbs.clear();
+}
+static void RebuildSelectionThumbs() {
+    // Preserve already-decoded thumbnails for paths that stay selected; free the rest.
+    std::vector<SelThumb> next;
+    next.reserve(g_selected.size());
+    for (const auto& p : g_selected) {
+        SelThumb st{ p, nullptr, 0, 0 };
+        for (const auto& old : g_selThumbs) {
+            if (old.path == p) { st.bmp = old.bmp; st.w = old.w; st.h = old.h; break; }
+        }
+        next.push_back(st);
+    }
+    for (const auto& old : g_selThumbs) {
+        bool still = g_selected.count(old.path) > 0;
+        if (!still && old.bmp) DeleteObject(old.bmp);
+    }
+    g_selThumbs.swap(next);
+    int itemH = DPI(104);
+    int contentH = (int)g_selThumbs.size() * itemH;
+    int panelH = g_statusTop - g_selContentTop; if (panelH < 0) panelH = 0;
+    g_selMaxScroll = contentH - panelH; if (g_selMaxScroll < 0) g_selMaxScroll = 0;
+    if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
+    if (g_selScroll < 0) g_selScroll = 0;
+    g_selHover = -1;
+}
+static void EnsureSelThumb(const std::wstring& path) {
+    for (auto& t : g_selThumbs) {
+        if (t.path != path) continue;
+        if (t.bmp) return;
+        Gdiplus::Bitmap* b = LoadViaWIC(path);
+        if (!b) return;
+        INT W = (INT)b->GetWidth(), H = (INT)b->GetHeight();
+        int ts = DPI(76);
+        double sc = (double)ts / (std::max)((int)W, (int)H);
+        int dw = (int)(W * sc + 0.5), dh = (int)(H * sc + 0.5);
+        if (dw < 1) dw = 1; if (dh < 1) dh = 1;
+        Gdiplus::Bitmap small(dw, dh, PixelFormat32bppARGB);
+        Gdiplus::Graphics gc(&small);
+        gc.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        Gdiplus::SolidBrush wbr(Gdiplus::Color(255, 255, 255, 255));
+        gc.FillRectangle(&wbr, 0, 0, dw, dh);
+        gc.DrawImage(b, Gdiplus::Rect(0, 0, dw, dh), 0, 0, W, H, Gdiplus::UnitPixel);
+        delete b;
+        HBITMAP hb = nullptr;
+        small.GetHBITMAP(Gdiplus::Color(255, 255, 255, 255), &hb);
+        t.bmp = hb; t.w = dw; t.h = dh;
+        return;
+    }
+}
+static int SelPanelItemAt(int x, int y) {
+    if (g_selThumbs.empty() || g_selPanelW <= 0) return -1;
+    if (x < 0 || x >= g_selPanelW) return -1;
+    if (y < g_selContentTop || y >= g_statusTop) return -1;
+    int itemH = DPI(104);
+    int pad = DPI(10);
+    int inner = y - g_selContentTop + g_selScroll;
+    int idx = inner / itemH;
+    if (idx < 0 || idx >= (int)g_selThumbs.size()) return -1;
+    int rowTop = idx * itemH;
+    if (inner - rowTop < pad) return -1;
+    if (inner - rowTop > pad + DPI(80)) return -1;
+    return idx;
+}
+
+static bool EncodeWhiteJpeg(Gdiplus::Bitmap* src, std::vector<unsigned char>& out) {
+    INT W = (INT)src->GetWidth(), H = (INT)src->GetHeight();
+    if (W <= 0 || H <= 0) return false;
+    Gdiplus::Bitmap flat(W, H, PixelFormat32bppARGB);
+    Gdiplus::Graphics g(&flat);
+    Gdiplus::SolidBrush wbr(Gdiplus::Color(255, 255, 255, 255));
+    g.FillRectangle(&wbr, 0, 0, W, H);
+    g.DrawImage(src, 0, 0, W, H);
+    IStream* stream = nullptr;
+    if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK || !stream) return false;
+    CLSID clsid;
+    if (GetEncoderClsid(L"image/jpeg", &clsid) < 0) { stream->Release(); return false; }
+    Gdiplus::EncoderParameters ep; ep.Count = 1;
+    ep.Parameter[0].Guid = Gdiplus::EncoderQuality;
+    ep.Parameter[0].NumberOfValues = 1;
+    ep.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+    ULONG q = 90; ep.Parameter[0].Value = &q;
+    if (flat.Save(stream, &clsid, &ep) != Gdiplus::Ok) { stream->Release(); return false; }
+    STATSTG st;
+    if (FAILED(stream->Stat(&st, STATFLAG_NONAME))) { stream->Release(); return false; }
+    LARGE_INTEGER zero = {}; ULARGE_INTEGER npos;
+    stream->Seek(zero, STREAM_SEEK_SET, &npos);
+    SIZE_T sz = (SIZE_T)st.cbSize.QuadPart;
+    out.resize(sz);
+    ULONG read = 0;
+    stream->Read(out.data(), (ULONG)sz, &read);
+    stream->Release();
+    out.resize(read);
+    return read > 0;
+}
+
+struct PdfPage { int W, H; std::vector<unsigned char> bytes; };
+
+static bool WritePDFFile(const std::wstring& path, const std::vector<PdfPage>& pages) {
+    std::string pdf;
+    pdf.reserve(1 << 16);
+    pdf += "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+    std::vector<long long> off;
+    int totalObjs = 2 + (int)pages.size() * 3;
+    off.resize(totalObjs + 1, 0);
+
+    auto beginObj = [&](int n) { off[n] = (long long)pdf.size(); pdf += std::to_string(n) + " 0 obj\n"; };
+    auto wr = [&](const std::string& s) { pdf += s; };
+
+    beginObj(1);
+    wr("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    beginObj(2);
+    std::string kids;
+    for (size_t i = 0; i < pages.size(); i++) kids += std::to_string(3 + (int)i * 3) + " 0 R ";
+    wr(std::string("<< /Type /Pages /Kids [ ") + kids + std::string("] /Count ") + std::to_string(pages.size()) + " >>\nendobj\n");
+
+    const double PW = 612.0, PH = 792.0, M = 24.0;
+    for (size_t i = 0; i < pages.size(); i++) {
+        const PdfPage& pg = pages[i];
+        bool landscape = (double)pg.W / (double)pg.H > (PW / PH);
+        double pw = landscape ? PH : PW;
+        double ph = landscape ? PW : PH;
+        double availW = pw - 2 * M, availH = ph - 2 * M;
+        double sc = (std::min)(availW / pg.W, availH / pg.H);
+        double dw = pg.W * sc, dh = pg.H * sc;
+        double x = (pw - dw) / 2.0, y = (ph - dh) / 2.0;
+
+        int pageObj = 3 + (int)i * 3;
+        int imgObj = pageObj + 1;
+        int contObj = pageObj + 2;
+
+        beginObj(pageObj);
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] "
+            "/Resources << /XObject << /Im0 %d 0 R >> /ProcSet [/PDF /ImageC] >> "
+            "/Contents %d 0 R >>\nendobj\n", pw, ph, imgObj, contObj);
+        wr(buf);
+
+        beginObj(imgObj);
+        snprintf(buf, sizeof(buf),
+            "<< /Type /XObject /Subtype /Image /Width %d /Height %d "
+            "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %zu >>\nstream\n",
+            pg.W, pg.H, pg.bytes.size());
+        wr(buf);
+        pdf.append((const char*)pg.bytes.data(), pg.bytes.size());
+        wr("\nendstream\nendobj\n");
+
+        beginObj(contObj);
+        snprintf(buf, sizeof(buf), "q\n%.2f 0 0 %.2f %.2f %.2f cm\n/Im0 Do\nQ\n", dw, dh, x, y);
+        std::string cs = buf;
+        snprintf(buf, sizeof(buf), "<< /Length %zu >>\nstream\n", cs.size());
+        wr(buf);
+        wr(cs);
+        wr("endstream\nendobj\n");
+    }
+
+    long long xrefPos = (long long)pdf.size();
+    char hb[40];
+    snprintf(hb, sizeof(hb), "xref\n0 %d\n", totalObjs + 1);
+    wr(hb);
+    wr("0000000000 65535 f \n");
+    for (int n = 1; n <= totalObjs; n++) {
+        snprintf(hb, sizeof(hb), "%010lld 00000 n \n", off[n]);
+        wr(hb);
+    }
+    snprintf(hb, sizeof(hb), "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%lld\n%%%%EOF\n", totalObjs + 1, xrefPos);
+    wr(hb);
+
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    BOOL ok = WriteFile(h, pdf.data(), (DWORD)pdf.size(), &written, nullptr);
+    CloseHandle(h);
+    return ok && written == (DWORD)pdf.size();
+}
+
+static void ExportSelectionPDF() {
+    std::vector<std::wstring> list;
+    if (!g_selected.empty()) for (const auto& p : g_selected) list.push_back(p);
+    else if (!g_path.empty()) list.push_back(g_path);
+    else { MessageBoxW(g_hMain, L"Select one or more images first.", L"Export PDF", MB_OK | MB_ICONINFORMATION); return; }
+
+    WCHAR file[MAX_PATH] = {0};
+    wcscpy_s(file, MAX_PATH, L"images.pdf");
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMain;
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrFilter = L"PDF Document\0*.pdf\0";
+    ofn.lpstrDefExt = L"pdf";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    if (!GetSaveFileNameW(&ofn)) return;
+
+    std::vector<PdfPage> pages;
+    int failed = 0;
+    for (const auto& p : list) {
+        Gdiplus::Bitmap* b = LoadViaWIC(p);
+        if (!b) { failed++; continue; }
+        PdfPage pg; pg.W = (int)b->GetWidth(); pg.H = (int)b->GetHeight();
+        if (!EncodeWhiteJpeg(b, pg.bytes)) { failed++; delete b; continue; }
+        delete b;
+        pages.push_back(pg);
+    }
+    if (pages.empty()) { MessageBoxW(g_hMain, L"Could not encode any of the selected images.", L"Export PDF", MB_OK | MB_ICONERROR); return; }
+    if (!WritePDFFile(file, pages)) { MessageBoxW(g_hMain, L"Failed to write the PDF file.", L"Export PDF", MB_OK | MB_ICONERROR); return; }
+
+    std::wstring msg = L"Exported " + std::to_wstring(pages.size()) + L" page(s) to PDF.";
+    if (failed > 0) msg += L"\n" + std::to_wstring(failed) + L" image(s) could not be read.";
+    g_sLeft = msg; InvalidateChrome();
+    MessageBoxW(g_hMain, msg.c_str(), L"Export PDF", MB_OK | MB_ICONINFORMATION);
+}
+
+static void DeleteSelected() {
+    if (g_selected.empty()) { g_sLeft = L"Nothing selected to delete"; InvalidateChrome(); return; }
+    int n = (int)g_selected.size();
+    std::wstring msg = L"Send " + std::to_wstring(n) + L" selected image(s) to the Recycle Bin?";
+    if (MessageBoxW(g_hMain, msg.c_str(), L"Delete", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+
+    std::wstring list;
+    for (const auto& p : g_selected) { list += p; list.push_back(0); }
+    list.push_back(0);
+    std::vector<WCHAR> buf(list.begin(), list.end());
+    SHFILEOPSTRUCTW op = {};
+    op.hwnd = g_hMain;
+    op.wFunc = FO_DELETE;
+    op.pFrom = buf.data();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    SHFileOperationW(&op);
+
+    std::set<std::wstring> kept;
+    for (const auto& p : g_selected) if (PathFileExistsW(p.c_str())) kept.insert(p);
+    int removed = n - (int)kept.size();
+    bool currentGone = (!g_path.empty() && g_selected.count(g_path) && !kept.count(g_path));
+    g_selected.swap(kept);
+    RebuildSelectionThumbs();
+    RebuildFolderList();
+    if (currentGone) {
+        if (!g_files.empty()) { int idx = (g_index >= 0) ? g_index : 0; SwitchToImage(idx); }
+        else { CloseImage(); EnableButtons(false); UpdateEditName(); UpdateTitle(); }
+    }
+    g_sLeft = (removed > 0) ? (L"Sent " + std::to_wstring(removed) + L" image(s) to Recycle Bin")
+                            : L"No files were deleted";
+    EnableButtons(g_bmp != nullptr);
+    InvalidateChrome();
+    UpdateStatus();
 }
 
 static bool RegSetString(HKEY root, const std::wstring& sub, const WCHAR* val, const std::wstring& data) {
@@ -1517,56 +1891,139 @@ static void UpdateStatus() {
 static void InvalidateChrome() {
     if (!g_hMain) return;
     RECT rc; GetClientRect(g_hMain, &rc);
-    RECT topRc = { 0, 0, rc.right, g_tbh };
-    RECT stRc = { 0, g_statusTop, rc.right, rc.bottom };
-    InvalidateRect(g_hMain, &topRc, FALSE);
-    InvalidateRect(g_hMain, &stRc, FALSE);
+    int ribbonBottom = g_tabH + g_ribbonH;
+    RECT below = { 0, ribbonBottom, rc.right, rc.bottom };
+    InvalidateRect(g_hMain, &below, FALSE);
+}
+static void InvalidateSelBtn() {
+    HWND h = HwndForCmd(IDC_CHECKSEL);
+    if (h) InvalidateRect(h, nullptr, FALSE);
+}
+
+static HWND HwndForCmd(int id) {
+    for (int i = 0; i < g_nCmds; i++) if (g_cmds[i].id == id) return g_cmds[i].hwnd;
+    return nullptr;
 }
 
 static void Layout() {
     RECT rc; GetClientRect(g_hMain, &rc);
+    g_tabH = DPI(32);
+    g_ribbonH = DPI(96);
+    g_nameBarH = DPI(44);
+    g_selPanelW = DPI(232);
     g_statusH = DPI(30);
     g_statusTop = rc.bottom - g_statusH;
+    g_topChrome = g_tabH + g_ribbonH + g_nameBarH;
 
-    int btnH = DPI(40);
-    int y = (g_tbh - btnH) / 2;
-    int x = rc.right - DPI(10);
-    int leftmost = rc.right;
-    for (int i = g_nBtns - 1; i >= 0; i--) {
-        if (g_btns[i].groupStart) x -= DPI(14); else x -= DPI(6);
-        int w = DPI(g_btns[i].w);
-        x -= w;
-        if (g_btn[i]) MoveWindow(g_btn[i], x, y, w, btnH, TRUE);
-        leftmost = x;
+    g_btnDraw.clear();
+    g_groupLabels.clear();
+
+    g_tabRects.clear();
+    int tabW = DPI(96);
+    int tx = 0;
+    for (int i = 0; i < g_nTabs; i++) {
+        TabRectDef tr; tr.rc = { tx, 0, tx + tabW, g_tabH }; tr.name = g_tabs[i].name;
+        g_tabRects.push_back(tr);
+        tx += tabW;
     }
 
-    int chkW = DPI(104);
-    int chkX = DPI(16);
-    if (g_hCheck) MoveWindow(g_hCheck, chkX, (g_tbh - btnH) / 2, chkW, btnH, TRUE);
+    // ---- Hide all command buttons first ----
+    for (int i = 0; i < g_nCmds; i++) ShowWindow(g_cmds[i].hwnd, SW_HIDE);
 
-    int chipX = chkX + chkW + DPI(12);
-    int chipW = leftmost - DPI(16) - chipX;
-    if (chipW < DPI(220)) chipW = DPI(220);
-    int chipH = DPI(40);
-    int chipY = (g_tbh - chipH) / 2;
-    g_chipRect = { chipX, chipY, chipX + chipW, chipY + chipH };
-    int padX = DPI(14), padY = DPI(7);
+    // ---- Ribbon content for the active tab ----
+    int padTop = DPI(8);
+    int groupLabelH = DPI(18);
+    int btnAreaH = g_ribbonH - groupLabelH - padTop;
+    int btnTop = g_tabH + padTop;
+    int largeW = DPI(60);
+    int smallW = DPI(74);
+    int smallH = (btnAreaH - DPI(6)) / 3;
+    if (smallH > DPI(28)) smallH = DPI(28);
+
+    const RTabDef& tab = g_tabs[g_activeTab];
+    int gx = DPI(10);
+    for (int gi = 0; gi < tab.count; gi++) {
+        const RGroupDef& grp = tab.groups[gi];
+        gx += DPI(8);
+        int groupStart = gx;
+        int colTop = btnTop;
+        int colIdx = 0;
+        int itemsInCol = 0;
+        for (int ii = 0; ii < grp.count; ii++) {
+            const RItem& it = grp.items[ii];
+            HWND hw = HwndForCmd(it.id);
+            if (it.large) {
+                if (hw) {
+                    MoveWindow(hw, gx, btnTop, largeW, btnAreaH, TRUE);
+                    ShowWindow(hw, SW_SHOW);
+                    g_btnDraw.push_back({ hw, true, it.icon, it.label, it.id });
+                }
+                gx += largeW + DPI(2);
+                colIdx = 0; itemsInCol = 0;
+            } else {
+                if (colIdx == 0) { colTop = btnTop; itemsInCol = 0; }
+                int sy = colTop + itemsInCol * (smallH + DPI(2));
+                if (hw) {
+                    MoveWindow(hw, gx, sy, smallW, smallH, TRUE);
+                    ShowWindow(hw, SW_SHOW);
+                    g_btnDraw.push_back({ hw, false, it.icon, it.label, it.id });
+                }
+                itemsInCol++;
+                colIdx++;
+                if (itemsInCol >= 3) { gx += smallW + DPI(2); colIdx = 0; itemsInCol = 0; }
+            }
+        }
+        if (colIdx > 0) gx += smallW + DPI(2);
+        int groupEnd = gx;
+
+        int labelY = g_tabH + g_ribbonH - DPI(18);
+        GroupLabelDef gl;
+        gl.rc = { groupStart, labelY, groupEnd, g_tabH + g_ribbonH };
+        gl.name = grp.name;
+        gl.sepX = groupEnd + DPI(4);
+        g_groupLabels.push_back(gl);
+
+        gx = groupEnd + DPI(8);
+    }
+
+    // ---- Name bar (rename chip) ----
+    int chipX = DPI(16);
+    int chipY = g_tabH + g_ribbonH + (g_nameBarH - DPI(34)) / 2;
+    int chipW = rc.right - chipX - DPI(16);
+    if (chipW < DPI(200)) chipW = DPI(200);
+    int chipH = DPI(34);
+    g_nameChip = { chipX, chipY, chipX + chipW, chipY + chipH };
+    int padX = DPI(12), padY = DPI(6);
     MoveWindow(g_hEdit, chipX + padX, chipY + padY, chipW - 2 * padX, chipH - 2 * padY, TRUE);
 
-    g_canvasTop = g_tbh;
-    g_canvasLeft = 0;
+    // ---- Canvas + panels ----
+    g_canvasTop = g_topChrome;
+    g_canvasLeft = g_selPanelW;
     g_panelW = g_editMode ? DPI(284) : 0;
-    g_canvasW = rc.right - g_panelW;
-    g_canvasH = g_statusTop - g_tbh;
+    g_canvasW = rc.right - g_selPanelW - g_panelW;
+    if (g_canvasW < DPI(80)) g_canvasW = DPI(80);
+    g_canvasH = g_statusTop - g_topChrome;
+
+    g_selContentTop = g_topChrome + DPI(40);
+
+    // total thumb content height for scroll
+    int itemH = DPI(104);
+    int contentH = (int)g_selThumbs.size() * itemH;
+    int panelH = g_statusTop - g_selContentTop;
+    if (panelH < 0) panelH = 0;
+    g_selMaxScroll = contentH - panelH;
+    if (g_selMaxScroll < 0) g_selMaxScroll = 0;
+    if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
+    if (g_selScroll < 0) g_selScroll = 0;
 
     if (g_editMode) {
         int x0 = rc.right - g_panelW;
         int innerX = x0 + DPI(16);
         int innerW = g_panelW - DPI(32);
         HWND title = GetDlgItem(g_hMain, 4900);
-        if (title) MoveWindow(title, x0 + DPI(8), g_tbh + DPI(10), g_panelW - DPI(16), DPI(22), TRUE);
-        int yy = g_tbh + DPI(42);
-        int rowH = (g_statusTop - g_tbh - DPI(90)) / ADJ_COUNT;
+        if (title) MoveWindow(title, x0 + DPI(8), g_topChrome + DPI(10), g_panelW - DPI(16), DPI(22), TRUE);
+        int yy = g_topChrome + DPI(42);
+        int rowH = (g_statusTop - g_topChrome - DPI(90)) / ADJ_COUNT;
         if (rowH < DPI(40)) rowH = DPI(40);
         for (int i = 0; i < ADJ_COUNT; i++) {
             if (g_adjLbl[i]) MoveWindow(g_adjLbl[i], innerX, yy, innerW - DPI(44), DPI(18), TRUE);
@@ -1577,6 +2034,8 @@ static void Layout() {
         HWND r = GetDlgItem(g_hMain, IDC_EDITRESET);
         if (r) MoveWindow(r, innerX, g_statusTop - DPI(40), innerW, DPI(30), TRUE);
     }
+
+    InvalidateRect(g_hMain, nullptr, FALSE);
 }
 
 static void MakeRoundPath(Gdiplus::GraphicsPath& path, int x, int y, int w, int h, int r) {
@@ -1652,7 +2111,124 @@ static void DrawIcon(Gdiplus::Graphics* g, int iconId, float cx, float cy, float
                 g->DrawLine(&p, mcx - mr * 0.5f, mcy, mcx + mr * 0.5f, mcy);
             }
         }
+    } else if (iconId == IC_OPEN) {
+        float h = s * 0.34f;
+        Gdiplus::SolidBrush fb(c);
+        Gdiplus::GraphicsPath fld;
+        Gdiplus::PointF pts[] = {
+            Gdiplus::PointF(cx - h, cy - h * 0.55f),
+            Gdiplus::PointF(cx - h * 0.18f, cy - h * 0.55f),
+            Gdiplus::PointF(cx + h * 0.10f, cy - h * 0.95f),
+            Gdiplus::PointF(cx + h, cy - h * 0.95f),
+            Gdiplus::PointF(cx + h, cy + h * 0.95f),
+            Gdiplus::PointF(cx - h, cy + h * 0.95f)
+        };
+        fld.AddLines(pts, 6); fld.CloseFigure();
+        g->DrawPath(&p, &fld);
+        float ax = cx + h * 0.42f;
+        g->DrawLine(&p, ax, cy + h * 0.45f, ax, cy - h * 0.35f);
+        g->DrawLine(&p, ax - s * 0.14f, ax > cx ? cy - h * 0.15f : cy, ax, cy - h * 0.45f);
+        g->DrawLine(&p, ax + s * 0.14f, cy - h * 0.15f, ax, cy - h * 0.45f);
+    } else if (iconId == IC_FOLDER) {
+        float h = s * 0.36f;
+        Gdiplus::GraphicsPath fld;
+        Gdiplus::PointF pts[] = {
+            Gdiplus::PointF(cx - h, cy - h * 0.55f),
+            Gdiplus::PointF(cx - h * 0.18f, cy - h * 0.55f),
+            Gdiplus::PointF(cx + h * 0.10f, cy - h * 0.90f),
+            Gdiplus::PointF(cx + h, cy - h * 0.90f),
+            Gdiplus::PointF(cx + h, cy + h * 0.90f),
+            Gdiplus::PointF(cx - h, cy + h * 0.90f)
+        };
+        fld.AddLines(pts, 6); fld.CloseFigure();
+        g->DrawPath(&p, &fld);
+    } else if (iconId == IC_SAVE) {
+        float h = s * 0.38f;
+        g->DrawRectangle(&p, cx - h, cy - h, 2 * h, 2 * h);
+        g->DrawRectangle(&p, cx - h * 0.42f, cy - h, h * 0.84f, h * 0.62f);
+        g->DrawRectangle(&p, cx - h * 0.58f, cy + h * 0.12f, h * 1.16f, h * 0.78f);
+    } else if (iconId == IC_UNDO) {
+        DrawCircularArrow(g, cx, cy, s * 0.36f, 130, -270, false, c, pw);
+    } else if (iconId == IC_REDO) {
+        DrawCircularArrow(g, cx, cy, s * 0.36f, 50, 270, true, c, pw);
+    } else if (iconId == IC_COPY) {
+        float h = s * 0.30f;
+        g->DrawRectangle(&p, cx - h * 0.2f, cy - h * 1.05f, h * 1.5f, h * 1.7f);
+        g->DrawRectangle(&p, cx - h * 1.3f, cy - h * 0.55f, h * 1.5f, h * 1.7f);
+        g->DrawLine(&p, cx - h * 1.0f, cy - h * 0.1f, cx - h * 0.1f, cy - h * 0.1f);
+        g->DrawLine(&p, cx - h * 1.0f, cy + h * 0.35f, cx - h * 0.1f, cy + h * 0.35f);
+    } else if (iconId == IC_CUT) {
+        float r = s * 0.13f;
+        g->DrawEllipse(&p, cx - s * 0.20f - r, cy + s * 0.18f - r, 2 * r, 2 * r);
+        g->DrawEllipse(&p, cx + s * 0.20f - r, cy + s * 0.18f - r, 2 * r, 2 * r);
+        g->DrawLine(&p, cx - s * 0.10f, cy + s * 0.10f, cx + s * 0.32f, cy - s * 0.34f);
+        g->DrawLine(&p, cx + s * 0.10f, cy + s * 0.10f, cx - s * 0.32f, cy - s * 0.34f);
+    } else if (iconId == IC_SELECT) {
+        float h = s * 0.36f;
+        Gdiplus::GraphicsPath bp; MakeRoundPath(bp, (int)(cx - h), (int)(cy - h), (int)(2 * h), (int)(2 * h), DPI(4));
+        g->DrawPath(&p, &bp);
+        Gdiplus::Pen cp(c, pw); cp.SetStartCap(Gdiplus::LineCapRound); cp.SetEndCap(Gdiplus::LineCapRound);
+        g->DrawLine(&cp, cx - h * 0.5f, cy, cx - h * 0.1f, cy + h * 0.45f);
+        g->DrawLine(&cp, cx - h * 0.1f, cy + h * 0.45f, cx + h * 0.55f, cy - h * 0.4f);
+    } else if (iconId == IC_SELALL) {
+        float h = s * 0.38f;
+        Gdiplus::Pen dp(c, pw); dp.SetDashStyle(Gdiplus::DashStyleDash);
+        g->DrawRectangle(&dp, cx - h, cy - h, 2 * h, 2 * h);
+    } else if (iconId == IC_CLEAR) {
+        float r = s * 0.36f;
+        g->DrawEllipse(&p, cx - r, cy - r, 2 * r, 2 * r);
+        g->DrawLine(&p, cx - r * 0.7f, cy + r * 0.7f, cx + r * 0.7f, cy - r * 0.7f);
+    } else if (iconId == IC_ADJUST) {
+        float w2 = s * 0.34f;
+        for (int k = -1; k <= 1; k++) {
+            float y = cy + k * s * 0.24f;
+            g->DrawLine(&p, cx - w2, y, cx + w2, y);
+            float kx = cx + (k == 0 ? -w2 * 0.4f : (k * w2 * 0.4f));
+            Gdiplus::SolidBrush kb(c);
+            g->FillEllipse(&kb, kx - s * 0.07f, y - s * 0.07f, s * 0.14f, s * 0.14f);
+        }
+    } else if (iconId == IC_SCAN) {
+        float h = s * 0.36f;
+        g->DrawLine(&p, cx - h + s * 0.16f, cy - h, cx + h, cy - h);
+        g->DrawLine(&p, cx + h, cy - h, cx + h, cy + h);
+        g->DrawLine(&p, cx + h, cy + h, cx - h, cy + h);
+        g->DrawLine(&p, cx - h, cy + h, cx - h, cy - h + s * 0.16f);
+        g->DrawLine(&p, cx - h, cy - h + s * 0.16f, cx - h + s * 0.16f, cy - h);
+        Gdiplus::Pen sp(Gdiplus::Color(c.GetA(), (BYTE)(c.GetR() + (255 - c.GetR()) * 2 / 3),
+            (BYTE)(c.GetG() + (255 - c.GetG()) * 2 / 3), (BYTE)(c.GetB() + (255 - c.GetB()) * 2 / 3)), pw);
+        g->DrawLine(&sp, cx - h * 0.7f, cy, cx + h * 0.7f, cy);
+    } else if (iconId == IC_PDF) {
+        float h = s * 0.36f;
+        g->DrawLine(&p, cx - h + s * 0.16f, cy - h, cx + h * 0.2f, cy - h);
+        g->DrawLine(&p, cx + h * 0.2f, cy - h, cx + h, cy - h + s * 0.18f);
+        g->DrawLine(&p, cx + h, cy - h + s * 0.18f, cx + h, cy + h);
+        g->DrawLine(&p, cx + h, cy + h, cx - h, cy + h);
+        g->DrawLine(&p, cx - h, cy + h, cx - h, cy - h);
+        g->DrawLine(&p, cx - h * 0.6f, cy - h * 0.1f, cx + h * 0.6f, cy - h * 0.1f);
+        g->DrawLine(&p, cx - h * 0.6f, cy + h * 0.25f, cx + h * 0.6f, cy + h * 0.25f);
+    } else if (iconId == IC_DELETE) {
+        float h = s * 0.34f;
+        g->DrawLine(&p, cx - h * 1.1f, cy - h * 0.85f, cx + h * 1.1f, cy - h * 0.85f);
+        g->DrawLine(&p, cx - h * 0.4f, cy - h * 0.85f, cx - h * 0.4f, cy - h * 1.15f);
+        g->DrawLine(&p, cx - h * 0.4f, cy - h * 1.15f, cx + h * 0.4f, cy - h * 1.15f);
+        g->DrawLine(&p, cx + h * 0.4f, cy - h * 1.15f, cx + h * 0.4f, cy - h * 0.85f);
+        Gdiplus::GraphicsPath body;
+        Gdiplus::PointF bp[] = {
+            Gdiplus::PointF(cx - h * 0.85f, cy - h * 0.85f),
+            Gdiplus::PointF(cx + h * 0.85f, cy - h * 0.85f),
+            Gdiplus::PointF(cx + h * 0.6f, cy + h * 1.0f),
+            Gdiplus::PointF(cx - h * 0.6f, cy + h * 1.0f)
+        };
+        body.AddLines(bp, 4); body.CloseFigure();
+        g->DrawPath(&p, &body);
+        g->DrawLine(&p, cx - h * 0.25f, cy - h * 0.5f, cx - h * 0.1f, cy + h * 0.6f);
+        g->DrawLine(&p, cx + h * 0.25f, cy - h * 0.5f, cx + h * 0.1f, cy + h * 0.6f);
     }
+}
+
+static const BtnDrawInfo* FindBtnDraw(HWND hwnd) {
+    for (const auto& b : g_btnDraw) if (b.hwnd == hwnd) return &b;
+    return nullptr;
 }
 
 static void DrawButton(DRAWITEMSTRUCT* dis) {
@@ -1663,78 +2239,67 @@ static void DrawButton(DRAWITEMSTRUCT* dis) {
     g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
 
+    const BtnDrawInfo* bi = FindBtnDraw(dis->hwndItem);
+    bool large = bi ? bi->large : false;
+    int iconId = bi ? bi->icon : IC_NONE;
+    const WCHAR* label = bi ? bi->label : L"";
+    int cmdId = bi ? bi->id : 0;
+
     bool disabled = (dis->itemState & ODS_DISABLED) != 0;
     bool pressed = (dis->itemState & ODS_SELECTED) != 0;
     bool hover = (g_hoverBtn == dis->hwndItem) && !disabled;
-    const BtnDef* def = nullptr;
-    for (int i = 0; i < g_nBtns; i++) if (g_btns[i].id == (int)dis->CtlID) { def = &g_btns[i]; break; }
+    bool checked = (cmdId == IDC_CHECKSEL) && IsCurrentSelected();
 
-    Gdiplus::Color fill = C_BTN;
-    if (disabled) fill = Gdiplus::Color(255, 36, 36, 52);
-    else if (def && def->primary) fill = pressed ? C_ACCENT : (hover ? C_ACCENT2 : C_ACCENT);
-    else if (pressed) fill = C_ACCENT;
-    else if (hover) fill = C_BTNHOV;
+    // Idle buttons blend into the ribbon (flat); hover/pressed get fill + border for depth.
+    Gdiplus::Color fill = C_RIBBON2;
+    bool drawBorder = false;
+    Gdiplus::Color border = C_BORDER;
+    if (disabled) fill = C_RIBBON2;
+    else if (checked) { fill = pressed ? C_ACCENT2 : C_ACCENT; }
+    else if (pressed) { fill = C_ACCENT; }
+    else if (hover) { fill = C_BTNHOV; drawBorder = true; }
 
-    int radius = DPI(9);
+    int radius = DPI(8);
     Gdiplus::GraphicsPath path;
-    MakeRoundPath(path, DPI(1), DPI(1), w - DPI(2), h - DPI(2), radius);
+    MakeRoundPath(path, 0, 0, w, h, radius);
     Gdiplus::SolidBrush br(fill);
     g.FillPath(&br, &path);
+    if (drawBorder) {
+        Gdiplus::Pen bp(border, 1);
+        g.DrawPath(&bp, &path);
+    }
 
-    if (def && def->icon) {
-        Gdiplus::Color ic;
-        if (disabled) ic = C_DIM;
-        else if (pressed) ic = Gdiplus::Color(255, 255, 255, 255);
-        else if (hover) ic = C_ACCENT2;
-        else ic = C_TEXT;
-        DrawIcon(&g, def->iconId, (float)w / 2, (float)h / 2, (float)DPI(18), ic);
-    } else {
-        WCHAR text[64] = {0};
-        GetWindowTextW(dis->hwndItem, text, 64);
-        Gdiplus::Color tc = disabled ? C_DIM : (((def && def->primary) || pressed) ? Gdiplus::Color(255, 255, 255, 255) : C_TEXT);
-        Gdiplus::Font font(hdc, (def && def->primary) ? g_hFontBold : g_hFont);
-        Gdiplus::SolidBrush tb(tc);
-        Gdiplus::StringFormat sf;
+    Gdiplus::Color ic, tc;
+    if (disabled) { ic = C_MUTED; tc = C_MUTED; }
+    else if (checked || pressed) { ic = Gdiplus::Color(255, 255, 255, 255); tc = Gdiplus::Color(255, 255, 255, 255); }
+    else if (hover) { ic = C_TEXT; tc = C_TEXT; }
+    else { ic = C_DIM; tc = C_TEXT; }
+
+    Gdiplus::Font font(hdc, g_hFont);
+    Gdiplus::SolidBrush tb(tc);
+    Gdiplus::StringFormat sf;
+    sf.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+    sf.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+
+    if (large) {
+        float iconSize = (float)DPI(26);
+        DrawIcon(&g, iconId, (float)w / 2, (float)h / 2 - (float)DPI(7), iconSize, ic);
         sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-        g.DrawString(text, -1, &font, Gdiplus::RectF(0, 0, (Gdiplus::REAL)w, (Gdiplus::REAL)h), &sf, &tb);
+        g.DrawString(label, -1, &font,
+            Gdiplus::RectF((Gdiplus::REAL)0, (Gdiplus::REAL)(h - DPI(19)), (Gdiplus::REAL)w, (Gdiplus::REAL)DPI(17)),
+            &sf, &tb);
+    } else {
+        float iconSize = (float)DPI(15);
+        float ix = (float)DPI(8) + iconSize / 2;
+        DrawIcon(&g, iconId, ix, (float)h / 2, iconSize, ic);
+        sf.SetAlignment(Gdiplus::StringAlignmentNear);
+        sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        g.DrawString(label, -1, &font,
+            Gdiplus::RectF((Gdiplus::REAL)(DPI(8) * 2 + iconSize), 0,
+                           (Gdiplus::REAL)(w - DPI(8) * 3 - iconSize), (Gdiplus::REAL)h),
+            &sf, &tb);
     }
-}
-
-static void DrawCheckbox(DRAWITEMSTRUCT* dis) {
-    RECT rr = dis->rcItem;
-    int w = rr.right - rr.left, h = rr.bottom - rr.top;
-    HDC hdc = dis->hDC;
-    Gdiplus::Graphics g(hdc);
-    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-
-    bool sel = IsCurrentSelected();
-    bool hover = (g_hoverBtn == dis->hwndItem);
-    int box = DPI(20);
-    int px = DPI(2);
-    int py = (h - box) / 2;
-
-    Gdiplus::Color boxFill = sel ? C_ACCENT : (hover ? C_BTNHOV : C_BTN);
-    Gdiplus::GraphicsPath bp;
-    MakeRoundPath(bp, px, py, box, box, DPI(5));
-    Gdiplus::SolidBrush bb(boxFill);
-    g.FillPath(&bb, &bp);
-    Gdiplus::Pen outline(sel ? C_ACCENT : Gdiplus::Color(255, 96, 98, 126), 1);
-    g.DrawPath(&outline, &bp);
-    if (sel) {
-        Gdiplus::Pen cp(Gdiplus::Color(255, 255, 255, 255), 2.6f);
-        cp.SetStartCap(Gdiplus::LineCapRound); cp.SetEndCap(Gdiplus::LineCapRound);
-        float bx = (float)px, by = (float)py;
-        g.DrawLine(&cp, bx + box * 0.24f, by + box * 0.52f, bx + box * 0.44f, by + box * 0.72f);
-        g.DrawLine(&cp, bx + box * 0.44f, by + box * 0.72f, bx + box * 0.78f, by + box * 0.26f);
-    }
-    Gdiplus::Font font(hdc, g_hFont);
-    Gdiplus::SolidBrush tb(C_TEXT);
-    Gdiplus::StringFormat sf;
-    sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    g.DrawString(L"Select", -1, &font,
-        Gdiplus::RectF((Gdiplus::REAL)(px + box + DPI(8)), 0,
-                       (Gdiplus::REAL)(w - px - box - DPI(8)), (Gdiplus::REAL)h), &sf, &tb);
 }
 
 static void Paint(HDC hdc) {
@@ -1751,28 +2316,139 @@ static void Paint(HDC hdc) {
     g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
     g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
 
-    Gdiplus::LinearGradientBrush barBrush(Gdiplus::Rect(0, 0, crc.right, g_tbh), C_BAR2, C_BAR, 90.f);
-    g.FillRectangle(&barBrush, 0, 0, crc.right, g_tbh);
-    Gdiplus::Pen sep(C_SEP, 1);
-    g.DrawLine(&sep, 0, g_tbh - 1, crc.right, g_tbh - 1);
+    Gdiplus::Pen sep(C_LINE, 1);
+    Gdiplus::SolidBrush bgBrush(C_CANVAS);
+    g.FillRectangle(&bgBrush, 0, 0, (INT)crc.right, (INT)crc.bottom);
 
-    int cxs = g_chipRect.left, cys = g_chipRect.top, cxw = g_chipRect.right - g_chipRect.left, cxh = g_chipRect.bottom - g_chipRect.top;
-    Gdiplus::GraphicsPath chipPath;
-    MakeRoundPath(chipPath, cxs, cys, cxw, cxh, DPI(12));
-    Gdiplus::SolidBrush chipBg(Gdiplus::Color(255, 38, 38, 56));
-    g.FillPath(&chipBg, &chipPath);
-    if (g_editing) {
-        Gdiplus::Pen ring(C_ACCENT, 1.6f);
-        g.DrawPath(&ring, &chipPath);
+    // ---- Tab strip ----
+    Gdiplus::SolidBrush tabBg(C_STRIP);
+    g.FillRectangle(&tabBg, 0, 0, (INT)crc.right, g_tabH);
+    Gdiplus::Font tabFont(mem, g_hFontBold);
+    Gdiplus::StringFormat tsf; tsf.SetAlignment(Gdiplus::StringAlignmentCenter); tsf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    for (size_t i = 0; i < g_tabRects.size(); i++) {
+        const RECT& trc = g_tabRects[i].rc;
+        bool active = ((int)i == g_activeTab);
+        if (active) {
+            Gdiplus::SolidBrush ab(C_RIBBON2);
+            g.FillRectangle(&ab, (INT)trc.left, (INT)trc.top, (INT)(trc.right - trc.left), (INT)(trc.bottom - trc.top));
+        }
+        Gdiplus::SolidBrush tc(active ? C_TEXT : C_MUTED);
+        Gdiplus::RectF r((Gdiplus::REAL)trc.left, (Gdiplus::REAL)trc.top, (Gdiplus::REAL)(trc.right - trc.left), (Gdiplus::REAL)(trc.bottom - trc.top));
+        g.DrawString(g_tabRects[i].name, -1, &tabFont, r, &tsf, &tc);
+        if (active) {
+            Gdiplus::SolidBrush ac(C_ACCENT);
+            g.FillRectangle(&ac, (INT)trc.left, (INT)(trc.bottom - DPI(3)), (INT)(trc.right - trc.left), (INT)DPI(3));
+        }
     }
 
-    Gdiplus::SolidBrush bg(C_BG);
-    g.FillRectangle(&bg, 0, top, cw, ch);
+    // ---- Ribbon area ----
+    Gdiplus::LinearGradientBrush ribBrush(Gdiplus::Rect(0, g_tabH, crc.right, g_ribbonH), C_RIBBON1, C_RIBBON2, 90.f);
+    g.FillRectangle(&ribBrush, 0, g_tabH, (INT)crc.right, g_ribbonH);
+    g.DrawLine(&sep, 0, g_tabH + g_ribbonH - 1, crc.right, g_tabH + g_ribbonH - 1);
+    Gdiplus::Pen gsep(C_LINE, 1);
+    for (const auto& gl : g_groupLabels) {
+        Gdiplus::Font gf(mem, g_hFontSmall);
+        Gdiplus::SolidBrush gb(C_MUTED);
+        Gdiplus::StringFormat gsf; gsf.SetAlignment(Gdiplus::StringAlignmentCenter); gsf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        g.DrawString(gl.name, -1, &gf, Gdiplus::RectF((Gdiplus::REAL)gl.rc.left, (Gdiplus::REAL)gl.rc.top, (Gdiplus::REAL)(gl.rc.right - gl.rc.left), (Gdiplus::REAL)(gl.rc.bottom - gl.rc.top)), &gsf, &gb);
+        g.DrawLine(&gsep, gl.sepX, g_tabH + DPI(10), gl.sepX, g_tabH + g_ribbonH - DPI(22));
+    }
 
+    // ---- Name bar ----
+    int nbTop = g_tabH + g_ribbonH;
+    Gdiplus::SolidBrush nbBg(C_NAMEBAR);
+    g.FillRectangle(&nbBg, 0, nbTop, (INT)crc.right, g_nameBarH);
+    g.DrawLine(&sep, 0, nbTop, crc.right, nbTop);
+    int cxs = g_nameChip.left, cys = g_nameChip.top, cxw = g_nameChip.right - g_nameChip.left, cxh = g_nameChip.bottom - g_nameChip.top;
+    Gdiplus::GraphicsPath chipPath;
+    MakeRoundPath(chipPath, cxs, cys, cxw, cxh, DPI(10));
+    Gdiplus::SolidBrush chipBg(C_CARD);
+    g.FillPath(&chipBg, &chipPath);
+    {
+        Gdiplus::Pen cp(g_editing ? C_ACCENT : C_BORDER, g_editing ? 1.6f : 1.0f);
+        g.DrawPath(&cp, &chipPath);
+    }
+
+    // ---- Selection panel (left) ----
+    int panelRight = g_selPanelW;
+    int panelTop = g_topChrome;
+    Gdiplus::SolidBrush pbg(C_PANEL);
+    g.FillRectangle(&pbg, 0, panelTop, panelRight, g_statusTop - panelTop);
+    g.DrawLine(&sep, panelRight - 1, panelTop, panelRight - 1, g_statusTop);
+    {
+        Gdiplus::Font hf(mem, g_hFontBold);
+        Gdiplus::SolidBrush hb(C_TEXT);
+        Gdiplus::StringFormat hsf; hsf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        std::wstring hdr = L"Selected (" + std::to_wstring(g_selThumbs.size()) + L")";
+        g.DrawString(hdr.c_str(), -1, &hf, Gdiplus::RectF((Gdiplus::REAL)DPI(14), (Gdiplus::REAL)(panelTop + DPI(8)), (Gdiplus::REAL)(panelRight - DPI(28)), (Gdiplus::REAL)DPI(26)), &hsf, &hb);
+    }
+    g.SetClip(Gdiplus::Rect(0, g_selContentTop, panelRight, g_statusTop - g_selContentTop));
+    {
+        int itemH = DPI(104);
+        int panelH = g_statusTop - g_selContentTop;
+        int tsize = DPI(76);
+        int first = g_selScroll / itemH; if (first < 0) first = 0;
+        int last = (g_selScroll + panelH) / itemH; if (last >= (int)g_selThumbs.size()) last = (int)g_selThumbs.size() - 1;
+        Gdiplus::Pen cardPen(C_BORDER, 1);
+        for (int i = first; i <= last && i < (int)g_selThumbs.size(); i++) {
+            if (i >= 0) EnsureSelThumb(g_selThumbs[i].path);
+            int rowTop = g_selContentTop + i * itemH - g_selScroll;
+            if (i == g_selHover) {
+                Gdiplus::SolidBrush hvb(C_BTNHOV);
+                Gdiplus::GraphicsPath hr;
+                MakeRoundPath(hr, DPI(4), rowTop, panelRight - DPI(8), itemH - DPI(2), DPI(8));
+                g.FillPath(&hvb, &hr);
+            }
+            int tx = (panelRight - tsize) / 2;
+            int ty = rowTop + DPI(6);
+            Gdiplus::GraphicsPath tb;
+            MakeRoundPath(tb, tx, ty, tsize, tsize, DPI(8));
+            Gdiplus::SolidBrush tbb(C_CARD);
+            g.FillPath(&tbb, &tb);
+            g.DrawPath(&cardPen, &tb);
+            SelThumb& st = g_selThumbs[i];
+            if (st.bmp) {
+                HDC tdc = CreateCompatibleDC(mem);
+                HBITMAP oldT = (HBITMAP)SelectObject(tdc, st.bmp);
+                int dx = tx + (tsize - st.w) / 2;
+                int dy = ty + (tsize - st.h) / 2;
+                BitBlt(mem, dx, dy, st.w, st.h, tdc, 0, 0, SRCCOPY);
+                SelectObject(tdc, oldT);
+                DeleteDC(tdc);
+            } else {
+                Gdiplus::Font pf(mem, g_hFontSmall);
+                Gdiplus::SolidBrush pb(C_MUTED);
+                Gdiplus::StringFormat psf; psf.SetAlignment(Gdiplus::StringAlignmentCenter); psf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+                g.DrawString(L"\u2022\u2022\u2022", -1, &pf, Gdiplus::RectF((Gdiplus::REAL)tx, (Gdiplus::REAL)ty, (Gdiplus::REAL)tsize, (Gdiplus::REAL)tsize), &psf, &pb);
+            }
+            std::wstring nm = NameOnly(st.path);
+            Gdiplus::Font nf(mem, g_hFontSmall);
+            Gdiplus::SolidBrush nb(i == g_selHover ? C_TEXT : C_DIM);
+            Gdiplus::StringFormat nsf; nsf.SetAlignment(Gdiplus::StringAlignmentCenter); nsf.SetTrimming(Gdiplus::StringTrimmingEllipsisPath); nsf.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+            g.DrawString(nm.c_str(), -1, &nf, Gdiplus::RectF((Gdiplus::REAL)DPI(8), (Gdiplus::REAL)(ty + tsize + DPI(2)), (Gdiplus::REAL)(panelRight - DPI(16)), (Gdiplus::REAL)DPI(16)), &nsf, &nb);
+        }
+        int contentH = (int)g_selThumbs.size() * itemH;
+        if (g_selMaxScroll > 0) {
+            int trackX = panelRight - DPI(7);
+            int trackY = g_selContentTop;
+            int trackH = panelH;
+            Gdiplus::SolidBrush trk(C_LINE);
+            g.FillRectangle(&trk, trackX, trackY, DPI(4), trackH);
+            int thumbH = trackH * panelH / contentH; if (thumbH < DPI(28)) thumbH = DPI(28);
+            int avail = trackH - thumbH; if (avail < 0) avail = 0;
+            int thumbY = trackY + avail * g_selScroll / g_selMaxScroll;
+            Gdiplus::SolidBrush thb(C_BORDER);
+            g.FillRectangle(&thb, trackX, thumbY, DPI(4), thumbH);
+        }
+    }
+    g.ResetClip();
+
+    // ---- Canvas ----
+    g.FillRectangle(&bgBrush, g_selPanelW, top, cw, ch);
     if (g_bmp && g_dispCache) {
         HDC cdc = CreateCompatibleDC(mem);
         HBITMAP oldC = (HBITMAP)SelectObject(cdc, g_dispCache);
-        BitBlt(mem, 0, g_canvasTop, g_cacheW, g_cacheH, cdc, 0, 0, SRCCOPY);
+        BitBlt(mem, g_selPanelW, g_canvasTop, g_cacheW, g_cacheH, cdc, 0, 0, SRCCOPY);
         SelectObject(cdc, oldC);
         DeleteDC(cdc);
 
@@ -1780,22 +2456,21 @@ static void Paint(HDC hdc) {
 
         if (IsCurrentSelected()) {
             Gdiplus::GraphicsPath bp;
-            int bw = DPI(120), bh = DPI(32);
-            MakeRoundPath(bp, DPI(16), top + DPI(16), bw, bh, DPI(16));
+            int bw = DPI(116), bh = DPI(30);
+            MakeRoundPath(bp, g_selPanelW + DPI(14), top + DPI(14), bw, bh, DPI(15));
             Gdiplus::SolidBrush sbb(Gdiplus::Color(225, 90, 146, 255));
             g.FillPath(&sbb, &bp);
             Gdiplus::Pen cp(Gdiplus::Color(255, 255, 255, 255), 2.4f);
             cp.SetStartCap(Gdiplus::LineCapRound); cp.SetEndCap(Gdiplus::LineCapRound);
-            float bx = (float)DPI(16) + bw * 0.12f, by = (float)(top + DPI(16)) + bh * 0.5f;
-            g.DrawLine(&cp, bx, by + 2, bx + 6, by + 8);
-            g.DrawLine(&cp, bx + 6, by + 8, bx + 16, by - 5);
+            float bx = (float)(g_selPanelW + DPI(14)) + bw * 0.14f, by = (float)(top + DPI(14)) + bh * 0.5f;
+            g.DrawLine(&cp, bx, by + 1, bx + 5, by + 7);
+            g.DrawLine(&cp, bx + 5, by + 7, bx + 14, by - 5);
             Gdiplus::Font font(mem, g_hFont);
             Gdiplus::SolidBrush tb(Gdiplus::Color(255, 255, 255, 255));
-            Gdiplus::StringFormat sf;
-            sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+            Gdiplus::StringFormat sf; sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
             g.DrawString(L"Selected", -1, &font,
-                Gdiplus::RectF((Gdiplus::REAL)(DPI(16) + 24), (Gdiplus::REAL)(top + DPI(16)),
-                               (Gdiplus::REAL)(bw - 24), (Gdiplus::REAL)bh), &sf, &tb);
+                Gdiplus::RectF((Gdiplus::REAL)(g_selPanelW + DPI(14) + 22), (Gdiplus::REAL)(top + DPI(14)),
+                               (Gdiplus::REAL)(bw - 22), (Gdiplus::REAL)bh), &sf, &tb);
         }
     } else {
         Gdiplus::SolidBrush fg(Gdiplus::Color(255, 150, 152, 172));
@@ -1804,25 +2479,26 @@ static void Paint(HDC hdc) {
         const WCHAR* m1 = L"Open an image to begin";
         const WCHAR* m2 = L"File > Open (Ctrl+O)   or   drag & drop a file here";
         Gdiplus::StringFormat sf; sf.SetAlignment(Gdiplus::StringAlignmentCenter);
-        g.DrawString(m1, -1, &font, Gdiplus::RectF(0, (Gdiplus::REAL)(top + ch / 2 - 40), (Gdiplus::REAL)cw, 36), &sf, &fg);
+        g.DrawString(m1, -1, &font, Gdiplus::RectF((Gdiplus::REAL)g_selPanelW, (Gdiplus::REAL)(top + ch / 2 - 40), (Gdiplus::REAL)cw, 36), &sf, &fg);
         Gdiplus::SolidBrush fg2(Gdiplus::Color(255, 100, 102, 122));
-        g.DrawString(m2, -1, &font2, Gdiplus::RectF(0, (Gdiplus::REAL)(top + ch / 2 + 4), (Gdiplus::REAL)cw, 24), &sf, &fg2);
+        g.DrawString(m2, -1, &font2, Gdiplus::RectF((Gdiplus::REAL)g_selPanelW, (Gdiplus::REAL)(top + ch / 2 + 4), (Gdiplus::REAL)cw, 24), &sf, &fg2);
     }
 
-    Gdiplus::SolidBrush sbg(C_BAR);
-    g.FillRectangle(&sbg, 0, g_statusTop, crc.right, g_statusH);
-    g.DrawLine(&sep, 0, g_statusTop, crc.right, g_statusTop);
-
+    // ---- Edit panel ----
     if (g_editMode && g_panelW > 0) {
         Gdiplus::SolidBrush pb(Gdiplus::Color(255, 24, 24, 36));
-        g.FillRectangle(&pb, crc.right - g_panelW, 0, g_panelW, crc.bottom);
+        g.FillRectangle(&pb, (INT)(crc.right - g_panelW), 0, g_panelW, (INT)crc.bottom);
         g.DrawLine(&sep, crc.right - g_panelW, 0, crc.right - g_panelW, crc.bottom);
     }
+
+    // ---- Status bar ----
+    Gdiplus::SolidBrush sbg(C_BAR);
+    g.FillRectangle(&sbg, 0, g_statusTop, (INT)crc.right, g_statusH);
+    g.DrawLine(&sep, 0, g_statusTop, crc.right, g_statusTop);
     {
         Gdiplus::Font sf(mem, g_hFont);
         Gdiplus::SolidBrush stl(C_DIM);
-        Gdiplus::StringFormat sfl;
-        sfl.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        Gdiplus::StringFormat sfl; sfl.SetLineAlignment(Gdiplus::StringAlignmentCenter);
         g.DrawString(g_sLeft.c_str(), -1, &sf, Gdiplus::RectF((Gdiplus::REAL)DPI(16), (Gdiplus::REAL)g_statusTop, (Gdiplus::REAL)(crc.right - DPI(300)), (Gdiplus::REAL)g_statusH), &sfl, &stl);
         if (!g_sRight.empty()) {
             Gdiplus::StringFormat sfr;
@@ -1866,17 +2542,26 @@ static LRESULT CALLBACK BtnSubProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp, UI
     return DefSubclassProc(hWnd, msg, wp, lp);
 }
 
-static void CreateButtons() {
-    for (int i = 0; i < g_nBtns; i++) {
-        g_btn[i] = CreateWindowW(L"BUTTON", g_btns[i].text,
-            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_CLIPSIBLINGS,
-            0, 0, 10, 10, g_hMain, (HMENU)(LONG_PTR)g_btns[i].id, g_hInst, nullptr);
-        SetWindowSubclass(g_btn[i], BtnSubProc, 0, 0);
+static void CreateRibbon() {
+    g_nCmds = 0;
+    for (int t = 0; t < g_nTabs; t++) {
+        const RTabDef& tab = g_tabs[t];
+        for (int gi = 0; gi < tab.count; gi++) {
+            const RGroupDef& grp = tab.groups[gi];
+            for (int ii = 0; ii < grp.count; ii++) {
+                int id = grp.items[ii].id;
+                if (HwndForCmd(id)) continue;
+                if (g_nCmds >= 48) break;
+                HWND hw = CreateWindowW(L"BUTTON", L"",
+                    WS_CHILD | BS_OWNERDRAW | WS_CLIPSIBLINGS,
+                    0, 0, 10, 10, g_hMain, (HMENU)(LONG_PTR)(INT_PTR)id, g_hInst, nullptr);
+                SetWindowSubclass(hw, BtnSubProc, 0, 0);
+                g_cmds[g_nCmds].id = id;
+                g_cmds[g_nCmds].hwnd = hw;
+                g_nCmds++;
+            }
+        }
     }
-    g_hCheck = CreateWindowW(L"BUTTON", L"Select",
-        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_CLIPSIBLINGS,
-        0, 0, 10, 10, g_hMain, (HMENU)IDC_CHECKSEL, g_hInst, nullptr);
-    SetWindowSubclass(g_hCheck, BtnSubProc, 0, 0);
 }
 
 static void OnCommand(WPARAM wp, LPARAM lp) {
@@ -1911,6 +2596,10 @@ static void OnCommand(WPARAM wp, LPARAM lp) {
         case ID_NEXT:  SwitchToImage(g_index + 1); break;
         case ID_SELALL: SelectAll(); break;
         case ID_SELCLR: ClearSelection(); break;
+        case ID_COPY:      CopySelectionToClipboard(false); break;
+        case ID_CUT:       CopySelectionToClipboard(true); break;
+        case ID_EXPORTPDF: ExportSelectionPDF(); break;
+        case ID_DELETE:    DeleteSelected(); break;
         case ID_DEFAULT: DoSetDefault(); break;
         case ID_SHOWFOLDER: if (!g_path.empty()) ShellExecuteW(g_hMain, L"open", g_dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case ID_EXIT:  PostMessageW(g_hMain, WM_CLOSE, 0, 0); break;
@@ -1930,6 +2619,9 @@ static HMENU BuildMenu() {
     AppendMenuW(mFile, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(mFile, MF_STRING, ID_DEFAULT, L"Set as &Default Image Viewer");
     AppendMenuW(mFile, MF_STRING, ID_SHOWFOLDER, L"Show in &Folder");
+    AppendMenuW(mFile, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(mFile, MF_STRING, ID_EXPORTPDF, L"E&xport Selected as PDF...");
+    AppendMenuW(mFile, MF_STRING, ID_DELETE, L"&Delete Selected (Recycle Bin)");
     AppendMenuW(mFile, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(mFile, MF_STRING, ID_EXIT, L"E&xit");
     AppendMenuW(mb, MF_POPUP, (UINT_PTR)mFile, L"&File");
@@ -1988,7 +2680,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_dpi = (double)GetDeviceCaps(sdc, LOGPIXELSY);
             if (g_dpi <= 0) g_dpi = 96.0;
             ReleaseDC(nullptr, sdc);
-            g_tbh = DPI(64);
             ApplyDarkTitlebar(hWnd);
 
             g_hFont = CreateFontW(-DPI(10), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -1997,7 +2688,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_hFontBold = CreateFontW(-DPI(10), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_GUI_FONT | FF_SWISS, L"Segoe UI");
-            g_hFontName = CreateFontW(-DPI(15), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            g_hFontSmall = CreateFontW(-DPI(9), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_GUI_FONT | FF_SWISS, L"Segoe UI");
+            g_hFontName = CreateFontW(-DPI(14), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_GUI_FONT | FF_SWISS, L"Segoe UI");
             g_hbrChip = CreateSolidBrush(RGB(38, 38, 56));
@@ -2009,10 +2703,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_hEdit, WM_SETFONT, (WPARAM)g_hFontName, TRUE);
             SendMessageW(g_hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(DPI(2), DPI(2)));
 
-            CreateButtons();
+            CreateRibbon();
             CreateEditPanel();
             DragAcceptFiles(hWnd, TRUE);
             EnableButtons(false);
+            Layout();
             UpdateStatus();
             return 0;
         }
@@ -2030,8 +2725,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lp;
             if (dis->CtlType == ODT_BUTTON) {
-                if (dis->CtlID == IDC_CHECKSEL) DrawCheckbox(dis);
-                else DrawButton(dis);
+                DrawButton(dis);
             }
             return TRUE;
         }
@@ -2050,8 +2744,46 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_LBUTTONDOWN: {
+            POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            // Tab strip
+            if (p.y < g_tabH) {
+                for (int i = 0; i < (int)g_tabRects.size(); i++) {
+                    const RECT& trc = g_tabRects[i].rc;
+                    if (p.x >= trc.left && p.x < trc.right) {
+                        if (g_activeTab != i) { g_activeTab = i; Layout(); }
+                        return 0;
+                    }
+                }
+                return 0;
+            }
+            // Selection panel
+            if (p.x < g_selPanelW && p.y >= g_topChrome && p.y < g_statusTop) {
+                int trackX = g_selPanelW - DPI(7);
+                int trackY = g_selContentTop;
+                int trackH = g_statusTop - g_selContentTop;
+                int contentH = (int)g_selThumbs.size() * DPI(104);
+                if (g_selMaxScroll > 0 && p.x >= trackX && p.x <= trackX + DPI(4)) {
+                    int thumbH = trackH * trackH / contentH; if (thumbH < DPI(28)) thumbH = DPI(28);
+                    int avail = trackH - thumbH; if (avail < 1) avail = 1;
+                    int thumbY = trackY + avail * g_selScroll / g_selMaxScroll;
+                    if (p.y >= thumbY && p.y <= thumbY + thumbH) {
+                        g_selDragScroll = true; g_selDragStartY = p.y; g_selDragStartScroll = g_selScroll;
+                        SetCapture(hWnd);
+                    } else {
+                        int lines = (p.y < thumbY ? -3 : 3);
+                        g_selScroll += lines * DPI(104);
+                        if (g_selScroll < 0) g_selScroll = 0;
+                        if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
+                        InvalidateRect(hWnd, nullptr, FALSE);
+                    }
+                    return 0;
+                }
+                int idx = SelPanelItemAt(p.x, p.y);
+                if (idx >= 0 && idx < (int)g_selThumbs.size()) LoadImageFromPath(g_selThumbs[idx].path);
+                return 0;
+            }
+            // Canvas (crop)
             if (g_cropping && g_bmp) {
-                POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
                 double W = (double)g_bmp->GetWidth(), H = (double)g_bmp->GetHeight();
                 double ix = (p.x - g_ox) / g_scale; double iy = (p.y - g_oy) / g_scale;
                 if (ix < 0) ix = 0; if (iy < 0) iy = 0;
@@ -2073,8 +2805,20 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_MOUSEMOVE: {
+            POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (g_selDragScroll && g_selMaxScroll > 0) {
+                int trackH = g_statusTop - g_selContentTop;
+                int contentH = (int)g_selThumbs.size() * DPI(104);
+                int thumbH = trackH * trackH / contentH; if (thumbH < DPI(28)) thumbH = DPI(28);
+                int avail = trackH - thumbH; if (avail < 1) avail = 1;
+                int delta = (p.y - g_selDragStartY) * g_selMaxScroll / avail;
+                g_selScroll = g_selDragStartScroll + delta;
+                if (g_selScroll < 0) g_selScroll = 0;
+                if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
+                InvalidateRect(hWnd, nullptr, FALSE);
+                return 0;
+            }
             if (g_dragging && g_cropping && g_bmp) {
-                POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
                 double W = (double)g_bmp->GetWidth(), H = (double)g_bmp->GetHeight();
                 double ix = (p.x - g_ox) / g_scale; double iy = (p.y - g_oy) / g_scale;
                 if (ix < 0) ix = 0; if (iy < 0) iy = 0;
@@ -2086,16 +2830,33 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g_rcX1 = ix; g_rcY1 = iy;
                 }
                 InvalidateRect(hWnd, nullptr, FALSE);
+                return 0;
+            }
+            if (p.x < g_selPanelW && p.y >= g_selContentTop && p.y < g_statusTop) {
+                int h = SelPanelItemAt(p.x, p.y);
+                if (h != g_selHover) { g_selHover = h; InvalidateRect(hWnd, nullptr, FALSE); }
+            } else if (g_selHover != -1) {
+                g_selHover = -1; InvalidateRect(hWnd, nullptr, FALSE);
             }
             return 0;
         }
         case WM_LBUTTONUP: {
+            if (g_selDragScroll) { g_selDragScroll = false; ReleaseCapture(); }
             if (g_dragging) { g_dragging = false; g_dragCorner = -1; ReleaseCapture(); InvalidateRect(hWnd, nullptr, FALSE); }
             return 0;
         }
         case WM_MOUSEWHEEL: {
-            if (g_bmp && GET_WHEEL_DELTA_WPARAM(wp) != 0) {
-                int d = GET_WHEEL_DELTA_WPARAM(wp);
+            POINT ms = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            ScreenToClient(hWnd, &ms);
+            bool overPanel = ms.x < g_selPanelW && ms.y >= g_topChrome && ms.y < g_statusTop;
+            int d = GET_WHEEL_DELTA_WPARAM(wp);
+            if (overPanel) {
+                int lines = (d > 0 ? -3 : 3);
+                g_selScroll += lines * DPI(104);
+                if (g_selScroll < 0) g_selScroll = 0;
+                if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
+                InvalidateRect(hWnd, nullptr, FALSE);
+            } else if (g_bmp && d != 0) {
                 ZoomBy(d > 0 ? 1.15 : 1.0 / 1.15);
             }
             return 0;
@@ -2124,8 +2885,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* m = (MINMAXINFO*)lp;
-            m->ptMinTrackSize.x = DPI(820);
-            m->ptMinTrackSize.y = DPI(540);
+            m->ptMinTrackSize.x = DPI(940);
+            m->ptMinTrackSize.y = DPI(600);
             return 0;
         }
         case WM_TIMER:
@@ -2490,8 +3251,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     CloseImage();
+    FreeSelThumbs();
     if (g_hFont) DeleteObject(g_hFont);
     if (g_hFontBold) DeleteObject(g_hFontBold);
+    if (g_hFontSmall) DeleteObject(g_hFontSmall);
     if (g_hFontName) DeleteObject(g_hFontName);
     if (g_hbrChip) DeleteObject(g_hbrChip);
     if (g_hbrPanel) DeleteObject(g_hbrPanel);

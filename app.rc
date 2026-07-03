@@ -1,2 +1,28 @@
 1 24 "app.manifest"
 1 ICON "app.ico"
+
+1 VERSIONINFO
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Image Viewer Pro"
+      VALUE "FileDescription", "Image Viewer Pro"
+      VALUE "FileVersion", "1.2.0"
+      VALUE "InternalName", "Image Viewer Pro"
+      VALUE "OriginalFilename", "Image Viewer Pro.exe"
+      VALUE "ProductName", "Image Viewer Pro"
+      VALUE "ProductVersion", "1.2.0"
+      VALUE "LegalCopyright", "Image Viewer Pro"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

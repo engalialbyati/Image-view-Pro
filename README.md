@@ -5,6 +5,10 @@ Compiles to a single, self-contained `.exe` with no runtime dependencies.
 
 ## Features
 
+- **Ribbon UI** — tabbed ribbon (Home / Image / View) with grouped, labeled commands; modern dark theme
+- **Selection panel** — left sidebar shows live thumbnails of every selected image; click a thumbnail to open it, scroll/drag to browse
+- **Export as PDF** — turn the selected images (or the current one) into a multi-page PDF (*File → Export Selected as PDF…* or Home → Manage → PDF)
+- **Delete** — send the selected images to the Recycle Bin (*File → Delete Selected* or Home → Manage → Delete)
 - **Open anything** — JPG, PNG, GIF, BMP, TIFF, WEBP, HEIC, AVIF, SVG, … (decoded with WIC, the same engine as Windows Photos)
 - **Rename in place** — press `Enter`, type, `Enter` again (click away also commits)
 - **Rotate** — `R` (right) / `Shift+R` (left); auto-saved
@@ -12,12 +16,12 @@ Compiles to a single, self-contained `.exe` with no runtime dependencies.
   - `C` — draw a rectangle
   - `Shift+C` — auto edge-detect + draggable 4-corner perspective crop (keystone/tilt correction)
 - **Scan** — `Z` enters scan mode (CamScanner-style document enhance); `Up`/`Down` sets intensity, `Enter` saves
-- **Undo** — `Ctrl+Z` (reverts crop/scan/rotate while on the same image)
-- **Select & organize** — `S` toggles selection, `Ctrl+A` all, `Ctrl+C`/`Ctrl+X` copy/cut files to paste anywhere
+- **Undo / Redo** — `Ctrl+Z` / `Ctrl+Y` (reverts crop/scan/rotate/adjust while on the same image)
+- **Select & organize** — `S` toggles selection, `Ctrl+A` all, `Ctrl+D` clear, `Ctrl+C`/`Ctrl+X` copy/cut files to paste anywhere
 - **Browse a folder** — `Left`/`Right` to move between images
 - **Configurable hotkeys** — *Edit → Set Hotkeys…* (persisted to `%APPDATA%\ImageViewerPro\settings.ini`)
 - **Set as default viewer** + open files from Explorer / drag & drop
-- Modern dark UI, DPI-aware, drag & drop, command-line open
+- DPI-aware, drag & drop, command-line open
 
 ## Build
 
@@ -44,6 +48,7 @@ Outputs `Image Viewer Pro.exe`.
 | Crop (Perspective / Auto) | `Shift+C` |
 | Scan (Document) | `Z` |
 | Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Y` |
 | Open / Save | `Ctrl+O` / `Ctrl+S` |
 
 All shortcuts are customizable from **Edit → Set Hotkeys…**.
