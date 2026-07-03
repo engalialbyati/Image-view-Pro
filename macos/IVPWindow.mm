@@ -106,6 +106,12 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 @property (nonatomic, strong) IVPStatus *status;
 @property (nonatomic, strong) NSView *topBar;
 @property (nonatomic, strong) NSButton *selectBtn;
+@property (nonatomic, strong) NSView *adjustPanel;
+@property (nonatomic, strong) NSMutableArray<NSTextField *> *adjLabels;
+@property (nonatomic, strong) NSMutableArray<NSTextField *> *adjValues;
+@property (nonatomic, strong) NSView *scanBar;
+@property (nonatomic, strong) NSSlider *scanSlider;
+@property (nonatomic, strong) NSTextField *scanVal;
 @end
 @implementation IVPWindow
 
@@ -145,14 +151,25 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
     _selectBtn        = IVPMakeBtn(@selector(doSelect:),  self, @"checkmark.circle",  @"Select / Deselect");
     NSButton *pdfB    = IVPMakeBtn(@selector(doPDF:),     self, @"doc.richtext",      @"Export selected as PDF");
     NSButton *delB    = IVPMakeBtn(@selector(doDelete:),  self, @"trash",             @"Delete (Trash)");
-    NSArray *btns = @[openB, prevB, nextB, rotL, rotR, undoB, redoB, fitB, _selectBtn, pdfB, delB];
+    NSButton *editB   = IVPMakeBtn(@selector(doEdit:),    self, @"slider.horizontal.3", @"Adjust Photo");
+    NSButton *scanB   = IVPMakeBtn(@selector(doScan:),    self, @"doc.viewfinder",    @"Scan Document");
+    NSButton *cropB   = IVPMakeBtn(@selector(doCropRect:),  self, @"crop",             @"Crop (Rectangle)");
+    NSButton *cropPB  = IVPMakeBtn(@selector(doCropPersp:), self, @"viewfinder",      @"Crop (Perspective)");
+    NSArray *btns = @[openB, prevB, nextB, rotL, rotR, editB, scanB, cropB, cropPB, fitB, undoB, redoB, _selectBtn, pdfB, delB];
     for (NSButton *b in btns) [b setButtonType:NSButtonTypeMomentaryChange];
     [_topBar addSubview:openB];
     [self layoutToolbar:btns];
 
+    [self buildAdjustPanel];
+    [self buildScanBar];
+    _adjustPanel.hidden = YES;
+    _scanBar.hidden = YES;
+
     [self.contentView addSubview:_topBar];
     [self.contentView addSubview:_sidebarScroll];
     [self.contentView addSubview:_image];
+    [self.contentView addSubview:_adjustPanel];
+    [self.contentView addSubview:_scanBar];
     [self.contentView addSubview:_status];
     [self setDelegate:self];
     [self layout];
@@ -170,15 +187,83 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
     }
 }
 
+static NSArray<NSString *> *IVPAdjNames() {
+    return @[@"Brightness",@"Contrast",@"Exposure",@"Highlights",@"Shadows",
+             @"Saturation",@"Vibrance",@"Temperature",@"Tint",@"Gamma",@"Sharpness",@"Vignette"];
+}
+- (void)buildAdjustPanel {
+    _adjustPanel = [[NSView alloc] initWithFrame:NSMakeRect(0,0,240,400)];
+    _adjLabels = [NSMutableArray array]; _adjValues = [NSMutableArray array];
+    NSArray *names = IVPAdjNames();
+    CGFloat y = 240; // will be re-laid out
+    NSFont *f = [NSFont systemFontOfSize:11];
+    for (NSInteger i = 0; i < (NSInteger)names.count; i++) {
+        NSTextField *lbl = [NSTextField labelWithString:names[i]];
+        lbl.font = f; lbl.textColor = [NSColor colorWithWhite:0.8 alpha:1];
+        [lbl sizeToFit];
+        NSTextField *val = [NSTextField labelWithString:@"0"];
+        val.font = f; val.alignment = NSTextAlignmentRight; val.textColor = [NSColor colorWithWhite:0.7 alpha:1];
+        NSSlider *sl = [[NSSlider alloc] initWithFrame:NSZeroRect];
+        sl.minValue = -100; sl.maxValue = 100; sl.intValue = 0;
+        sl.tag = i; sl.target = self; sl.action = @selector(adjustSlider:);
+        sl.continuous = YES;
+        [_adjustPanel addSubview:lbl]; [_adjustPanel addSubview:val]; [_adjustPanel addSubview:sl];
+        [_adjLabels addObject:lbl]; [_adjValues addObject:val];
+        (void)y;
+    }
+    NSButton *reset = [NSButton buttonWithTitle:@"Reset" target:self action:@selector(doResetAdjust:)];
+    [_adjustPanel addSubview:reset];
+}
+- (void)buildScanBar {
+    _scanBar = [[NSView alloc] initWithFrame:NSMakeRect(0,0,400,40)];
+    NSTextField *t = [NSTextField labelWithString:@"Scan intensity"];
+    t.textColor = [NSColor colorWithWhite:0.85 alpha:1]; [t sizeToFit]; [t setFrameOrigin:NSMakePoint(8, 13)];
+    _scanSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(110, 12, 180, 22)];
+    _scanSlider.minValue = 0; _scanSlider.maxValue = 100; _scanSlider.intValue = 70;
+    _scanSlider.target = self; _scanSlider.action = @selector(scanSlider:); _scanSlider.continuous = YES;
+    _scanVal = [NSTextField labelWithString:@"70%"];
+    _scanVal.textColor = [NSColor colorWithWhite:0.8 alpha:1]; [_scanVal sizeToFit]; [_scanVal setFrameOrigin:NSMakePoint(300, 13)];
+    NSButton *ok = [NSButton buttonWithTitle:@"Apply" target:self action:@selector(doScanCommit:)];
+    NSButton *cn = [NSButton buttonWithTitle:@"Cancel" target:self action:@selector(doScanCancel:)];
+    ok.frame = NSMakeRect(340, 7, 70, 26); cn.frame = NSMakeRect(412, 7, 70, 26);
+    [_scanBar addSubview:t]; [_scanBar addSubview:_scanSlider]; [_scanBar addSubview:_scanVal];
+    [_scanBar addSubview:ok]; [_scanBar addSubview:cn];
+}
+
 - (void)layout {
     NSRect b = self.contentView.bounds;
     CGFloat tb = 52, st = 24, side = (_sidebarScroll.hidden ? 0 : 220);
+    BOOL editing = _document.editing, scanning = _document.scanning;
+    CGFloat editW = editing ? 240 : 0;
+    CGFloat scanH = scanning ? 40 : 0;
+
     _topBar.frame = NSMakeRect(0, NSHeight(b) - tb, NSWidth(b), tb);
+    CGFloat contentBottom = st + scanH;
+    CGFloat contentTop = NSHeight(b) - tb;
+    _sidebarScroll.frame = NSMakeRect(0, contentBottom, side, contentTop - contentBottom);
+    _adjustPanel.frame = NSMakeRect(NSWidth(b) - editW, contentBottom, editW, contentTop - contentBottom);
+    [self layoutAdjustPanel];
+    _image.frame = NSMakeRect(side, contentBottom, NSWidth(b) - side - editW, contentTop - contentBottom);
+    _scanBar.frame = NSMakeRect(0, st, NSWidth(b), scanH);
     _status.frame  = NSMakeRect(0, 0, NSWidth(b), st);
-    _sidebarScroll.frame = NSMakeRect(0, st, side, NSHeight(b) - tb - st);
-    _image.frame = NSMakeRect(side, st, NSWidth(b) - side, NSHeight(b) - tb - st);
     CGFloat h = MAX(0, (CGFloat)_document.selectionCount * _sidebar.rowH);
     NSRect sf = _sidebar.bounds; sf.size = NSMakeSize(220, h); _sidebar.frame = sf;
+}
+- (void)layoutAdjustPanel {
+    if (!_adjustPanel || _adjustPanel.hidden) return;
+    CGFloat w = NSWidth(_adjustPanel.bounds); if (w <= 0) return;
+    CGFloat pad = 12, rowH = 46, top = NSHeight(_adjustPanel.bounds) - pad - 30;
+    for (NSInteger i = 0; i < 12; i++) {
+        CGFloat y = top - (CGFloat)i * rowH;
+        [_adjLabels[i] setFrameOrigin:NSMakePoint(pad, y + 24)];
+        _adjValues[i].frame = NSMakeRect(w - pad - 40, y + 24, 40, 16);
+        [[_adjustPanel subviews] enumerateObjectsUsingBlock:^(__kindof NSView *sv, NSUInteger idx, BOOL *stop) {
+            if ([sv isKindOfClass:[NSSlider class]] && ((NSSlider *)sv).tag == i) sv.frame = NSMakeRect(pad, y, w - 2*pad, 22);
+            *stop = NO;
+        }];
+    }
+    for (NSView *sv in _adjustPanel.subviews)
+        if ([sv isKindOfClass:[NSButton class]]) sv.frame = NSMakeRect(pad, 8, w - 2*pad, 28);
 }
 - (void)windowDidResize:(NSNotification *)n { (void)n; [self layout]; }
 
@@ -194,6 +279,21 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 - (void)doSelect:(id)s { (void)s; [_document toggleSelectCurrent]; }
 - (void)doPDF:(id)s  { (void)s; [_document exportSelectionToPDF]; }
 - (void)doDelete:(id)s { (void)s; [_document deleteSelection]; }
+- (void)doEdit:(id)s { (void)s; [_document enterEdit]; }
+- (void)doScan:(id)s { (void)s; [_document enterScan]; }
+- (void)doCropRect:(id)s { (void)s; [_document startRectCrop]; }
+- (void)doCropPersp:(id)s { (void)s; [_document startPerspCrop]; }
+- (void)doScanCommit:(id)s { (void)s; [_document commitScan]; }
+- (void)doScanCancel:(id)s { (void)s; [_document cancelScan]; }
+- (void)doResetAdjust:(id)s { (void)s; [_document resetAdjust]; [self syncAdjustUI]; }
+- (void)adjustSlider:(NSSlider *)s { NSInteger i = s.tag; [_document setAdjustValue:(int)i value:(int)s.intValue]; _adjValues[i].stringValue = [NSString stringWithFormat:@"%ld", (long)s.intValue]; }
+- (void)scanSlider:(NSSlider *)s { [_document setScanLevel:(int)s.intValue]; _scanVal.stringValue = [NSString stringWithFormat:@"%d%%", _document.scanLevel]; }
+- (void)syncAdjustUI {
+    for (NSView *sv in _adjustPanel.subviews) if ([sv isKindOfClass:[NSSlider class]]) {
+        NSSlider *s = (NSSlider *)sv; s.intValue = (int)[_document adjustValue:(int)s.tag];
+        _adjValues[s.tag].stringValue = [NSString stringWithFormat:@"%ld", (long)s.intValue];
+    }
+}
 
 - (void)openDocument {
     NSOpenPanel *p = [NSOpenPanel openPanel];
@@ -205,8 +305,19 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 #pragma mark Document delegate
 - (void)documentDidChange:(IVPDocument *)doc {
     (void)doc;
-    [_image documentChanged];
+    BOOL interactive = doc.editing || doc.scanning || doc.cropping;
+    if (interactive) [_image setNeedsDisplay:YES];
+    else [_image documentChanged];
+    [self refreshModeUI];
     [self updateStatus];
+}
+- (void)refreshModeUI {
+    BOOL editingChanged = (_adjustPanel.hidden == _document.editing);
+    BOOL scanChanged = (_scanBar.hidden == _document.scanning);
+    _adjustPanel.hidden = !_document.editing;
+    _scanBar.hidden = !_document.scanning;
+    if (_document.editing && (editingChanged || YES)) { _scanSlider.intValue = _document.scanLevel; [self syncAdjustUI]; }
+    if (editingChanged || scanChanged) [self layout];
 }
 - (void)documentSelectionDidChange:(IVPDocument *)doc {
     (void)doc;

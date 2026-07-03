@@ -2,6 +2,7 @@
 #import "IVPDocument.h"
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include <cstring>
 
 static NSArray<NSString *> *IVPImageExts() {
     static NSArray *e = @[@".jpg",@".jpeg",@".jpe",@".jfif",@".png",@".gif",@".bmp",@".dib",
@@ -90,6 +91,9 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     CGImageRef _display;
     std::vector<ivp::ImageBuf> _undo, _redo;
     std::vector<std::string> _undoLabel;
+    BOOL _editing; ivp::ImageBuf _editBase, _editSmall; int _adjVals[12];
+    BOOL _scanning; ivp::ImageBuf _scanBase, _scanFull; int _scanLevel;
+    BOOL _cropping, _perspCrop; double _corners[4][2]; double _rcX0,_rcY0,_rcX1,_rcY1;
 }
 @property (nonatomic, strong) NSMutableArray<NSURL *> *files;
 @property (nonatomic) NSInteger index;
@@ -106,6 +110,9 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
         _thumbCache = [NSCache new];
         _thumbCache.countLimit = 400;
         _index = -1;
+        _editing = NO; _scanning = NO; _cropping = NO; _perspCrop = NO; _scanLevel = 70;
+        for (int i = 0; i < 12; i++) _adjVals[i] = 0;
+        for (int i = 0; i < 4; i++) { _corners[i][0] = 0; _corners[i][1] = 0; }
     }
     return self;
 }
@@ -232,6 +239,146 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
         return [x.path localizedStandardCompare:y.path];
     }];
 }
+
+#pragma mark Adjust photo
+- (BOOL)editing { return _editing; }
+- (int)adjCount { return 12; }
+- (int)adjustValue:(int)i { return (i>=0 && i<12) ? _adjVals[i] : 0; }
+- (void)enterEdit {
+    if (_editing || !_work.valid()) return;
+    _editBase = _work;
+    double f = 700.0 / (MAX(_editBase.w, _editBase.h)); if (f > 1) f = 1;
+    _editSW = MAX(1, (int)(_editBase.w * f + 0.5));
+    _editSH = MAX(1, (int)(_editBase.h * f + 0.5));
+    _editSmall.alloc(_editSW, _editSH);
+    // box-average downscale
+    for (int y = 0; y < _editSH; y++) for (int x = 0; x < _editSW; x++) {
+        int sr0 = (int)(y / f), sr1 = (int)((y+1)/f), sc0 = (int)(x/f), sc1 = (int)((x+1)/f);
+        if (sr1<=sr0) sr1=sr0+1; if (sc1<=sc0) sc1=sc0+1;
+        long rr=0,gg=0,bb=0,n=0;
+        for (int yy=sr0; yy<sr1 && yy<_editBase.h; yy++) for (int xx=sc0; xx<sc1 && xx<_editBase.w; xx++) {
+            const uint8_t *p = _editBase.px.data() + ((size_t)yy*_editBase.w + xx)*4;
+            rr+=p[2]; gg+=p[1]; bb+=p[0]; n++;
+        }
+        if (!n) n=1;
+        uint8_t *q = _editSmall.px.data() + ((size_t)y*_editSW + x)*4;
+        q[2]=(uint8_t)(rr/n); q[1]=(uint8_t)(gg/n); q[0]=(uint8_t)(bb/n); q[3]=255;
+    }
+    for (int i=0;i<12;i++) _adjVals[i]=0;
+    _editing = YES;
+    [self recomputeEdit];
+}
+- (void)recomputeEdit {
+    if (!_editing) return;
+    ivp::ImageBuf out; out.alloc(_editSW, _editSH);
+    ivp::AdjustBuf(_editSmall.data(), _editSW, _editSH, _adjVals, out.data());
+    _work = out;
+    if (_display) { CGImageRelease(_display); _display = NULL; }
+    _display = ImageBufToCGImage(_work);
+    [_delegate documentDidChange:self];
+}
+- (void)setAdjustValue:(int)i value:(int)v { if (i>=0 && i<12) { _adjVals[i]=v; [self recomputeEdit]; } }
+- (void)resetAdjust { for (int i=0;i<12;i++) _adjVals[i]=0; [self recomputeEdit]; }
+- (void)applyEdit {
+    if (!_editing) return;
+    int W=_editBase.w, H=_editBase.h;
+    ivp::ImageBuf out; out.alloc(W, H);
+    ivp::AdjustBuf(_editBase.data(), W, H, _adjVals, out.data());
+    [self pushHistory:_editBase label:"Adjust photo"];
+    _work = out;
+    _editBase = ivp::ImageBuf(); _editSmall = ivp::ImageBuf();
+    _editing = NO;
+    [self refreshDisplay];
+}
+- (void)cancelEdit {
+    if (!_editing) return;
+    _work = _editBase; _editBase = ivp::ImageBuf(); _editSmall = ivp::ImageBuf();
+    _editing = NO;
+    [self refreshDisplay];
+}
+
+#pragma mark Scan document
+- (BOOL)scanning { return _scanning; }
+- (int)scanLevel { return _scanLevel; }
+static ivp::ImageBuf BlendScan(const ivp::ImageBuf &b, const ivp::ImageBuf &f, double k) {
+    ivp::ImageBuf o; if (!b.valid()) return o; o.alloc(b.w, b.h);
+    int n = b.w * b.h;
+    for (int i = 0; i < n; i++) {
+        const uint8_t *p = b.px.data() + i*4, *q = f.px.data() + i*4;
+        uint8_t *r = o.px.data() + i*4;
+        for (int c = 0; c < 3; c++) r[c] = (uint8_t)(p[c] + (q[c]-p[c])*k + 0.5);
+        r[3] = 255;
+    }
+    return o;
+}
+- (void)enterScan {
+    if (_scanning || !_work.valid()) return;
+    _scanBase = _work;
+    _scanFull = ivp::ScanDocument(_scanBase);
+    _scanLevel = 70; _scanning = YES;
+    _work = BlendScan(_scanBase, _scanFull, _scanLevel/100.0);
+    [self refreshDisplay];
+}
+- (void)setScanLevel:(int)lvl {
+    if (!_scanning) return;
+    if (lvl<0) lvl=0; if (lvl>100) lvl=100; _scanLevel = lvl;
+    _work = BlendScan(_scanBase, _scanFull, _scanLevel/100.0);
+    [self refreshDisplay];
+}
+- (void)commitScan {
+    if (!_scanning) return;
+    [self pushHistory:_scanBase label:"Scan"];
+    _scanBase = ivp::ImageBuf(); _scanFull = ivp::ImageBuf(); _scanning = NO;
+    [self refreshDisplay];
+}
+- (void)cancelScan {
+    if (!_scanning) return;
+    _work = _scanBase; _scanBase = ivp::ImageBuf(); _scanFull = ivp::ImageBuf(); _scanning = NO;
+    [self refreshDisplay];
+}
+
+#pragma mark Crop
+- (BOOL)cropping { return _cropping; }
+- (BOOL)perspCrop { return _perspCrop; }
+- (double)cornerX:(int)i { return (i>=0&&i<4)?_corners[i][0]:0; }
+- (double)cornerY:(int)i { return (i>=0&&i<4)?_corners[i][1]:0; }
+- (void)setCornerX:(int)i x:(double)x y:(double)y { if (i>=0&&i<4){ _corners[i][0]=x; _corners[i][1]=y; } }
+- (void)setRectCropX0:(double)x0 y0:(double)y0 x1:(double)x1 y1:(double)y1 { _rcX0=x0;_rcY0=y0;_rcX1=x1;_rcY1=y1; }
+- (double)rcX0 { return _rcX0; } - (double)rcY0 { return _rcY0; }
+- (double)rcX1 { return _rcX1; } - (double)rcY1 { return _rcY1; }
+- (void)startRectCrop {
+    if (!_work.valid()) return;
+    _cropping = YES; _perspCrop = NO; _rcX0=_rcY0=_rcX1=_rcY1=0;
+    [_delegate documentDidChange:self];
+}
+- (void)startPerspCrop {
+    if (!_work.valid()) return;
+    _cropping = YES; _perspCrop = YES;
+    double q[4][2] = {{0,0},{(double)_work.w,0},{(double)_work.w,(double)_work.h},{0,(double)_work.h}};
+    ivp::AutoDetectCorners(_work, q); // auto-detect; falls back to full frame
+    for (int i=0;i<4;i++){ _corners[i][0]=q[i][0]; _corners[i][1]=q[i][1]; }
+    [_delegate documentDidChange:self];
+}
+- (void)applyCrop {
+    if (!_cropping) return;
+    if (_perspCrop) {
+        double q[4][2]; for (int i=0;i<4;i++){ q[i][0]=_corners[i][0]; q[i][1]=_corners[i][1]; }
+        ivp::ImageBuf nb = ivp::WarpPerspective(_work, q);
+        if (nb.valid()) { [self pushHistory:_work label:"Perspective crop"]; _work = nb; }
+    } else {
+        double minX=MIN(_rcX0,_rcX1), maxX=MAX(_rcX0,_rcX1), minY=MIN(_rcY0,_rcY1), maxY=MAX(_rcY0,_rcY1);
+        int x=(int)minX, y=(int)minY, w=(int)(maxX-minX), h=(int)(maxY-minY);
+        if (x<0)x=0; if(y<0)y=0; if(x+w>_work.w)w=_work.w-x; if(y+h>_work.h)h=_work.h-y;
+        if (w>1 && h>1) {
+            ivp::ImageBuf nb; nb.alloc(w,h);
+            for (int yy=0; yy<h; yy++) memcpy(nb.px.data()+(size_t)yy*w*4, _work.px.data()+((size_t)(y+yy)*_work.w+x)*4, (size_t)w*4);
+            [self pushHistory:_work label:"Crop"]; _work = nb;
+        }
+    }
+    _cropping = NO; _perspCrop = NO;
+    [self refreshDisplay];
+}
+- (void)cancelCrop { _cropping = NO; _perspCrop = NO; [_delegate documentDidChange:self]; }
 
 - (NSImage *)thumbnailForURL:(NSURL *)url maxSize:(CGFloat)s {
     NSImage *cached = [_thumbCache objectForKey:url];

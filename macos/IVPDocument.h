@@ -35,6 +35,35 @@
 - (BOOL)isCurrentSelected;
 - (void)deleteSelection;               // to Trash
 - (BOOL)exportSelectionToPDF;          // prompts for save path
+
+// Adjust photo (brightness/contrast/… sliders)
+@property (nonatomic, readonly) BOOL editing;
+- (void)enterEdit;
+- (void)applyEdit;
+- (void)cancelEdit;
+- (void)setAdjustValue:(int)index value:(int)v;
+- (int)adjustValue:(int)index;
+- (void)resetAdjust;
+
+// Scan (document enhance)
+@property (nonatomic, readonly) BOOL scanning;
+@property (nonatomic, readonly) int scanLevel;
+- (void)enterScan;
+- (void)setScanLevel:(int)lvl;
+- (void)commitScan;
+- (void)cancelScan;
+
+// Crop
+@property (nonatomic, readonly) BOOL cropping;
+@property (nonatomic, readonly) BOOL perspCrop;
+- (void)startRectCrop;
+- (void)startPerspCrop;
+- (void)applyCrop;
+- (void)cancelCrop;
+// perspective corner access (image coords), settable by the view
+- (double)cornerX:(int)i;
+- (double)cornerY:(int)i;
+- (void)setCornerX:(int)i y:(double)y x:(double)x;
 - (NSArray<NSURL *> *)selectedURLsSorted;
 - (NSImage *)thumbnailForURL:(NSURL *)url maxSize:(CGFloat)s; // cached, for sidebar
 @end

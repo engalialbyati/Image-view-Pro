@@ -70,6 +70,11 @@
     NSMenu *imgMenu = [NSMenu new];
     [imgMenu addItemWithTitle:@"Rotate Left" action:@selector(doRotL:) keyEquivalent:@"r"].target = self.window;
     [imgMenu addItemWithTitle:@"Rotate Right" action:@selector(doRotR:) keyEquivalent:@"R"].target = self.window;
+    [imgMenu addItemWithTitle:@"Adjust Photo…" action:@selector(doEdit:) keyEquivalent:@"e"].target = self.window;
+    [imgMenu addItemWithTitle:@"Scan Document" action:@selector(doScan:) keyEquivalent:@"z"].target = self.window;
+    [imgMenu addItem:NSMenuItem.separatorItem];
+    [imgMenu addItemWithTitle:@"Crop (Rectangle)" action:@selector(doCropRect:) keyEquivalent:@"c"].target = self.window;
+    [imgMenu addItemWithTitle:@"Crop (Perspective / Auto)" action:@selector(doCropPersp:) keyEquivalent:@"C"].target = self.window;
     [imgMenu addItem:NSMenuItem.separatorItem];
     [imgMenu addItemWithTitle:@"Previous" action:@selector(doPrev:) keyEquivalent:@""].target = self.window;
     [imgMenu addItemWithTitle:@"Next" action:@selector(doNext:) keyEquivalent:@""].target = self.window;
