@@ -1,6 +1,8 @@
 // main.mm — application entry, menu bar, and window creation.
 #import <AppKit/AppKit.h>
 #import "IVPWindow.h"
+#import "IVPDocument.h"
+#import "IVPImageView.h"
 
 @interface IVPAppDelegate : NSObject <NSApplicationDelegate>
 @property (nonatomic, strong) IVPWindow *window;
@@ -17,7 +19,7 @@
                                           backing:NSBackingStoreBuffered defer:NO];
     [self.window setTitle:@"Image Viewer Pro"];
     [self.window center];
-    [self.window registerForDraggedTypes:@[NSFilenamesPboardType, (__bridge NSString *)kUTTypeFileURL]];
+    [self.window registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     [self.window setup];
     [self.window makeKeyAndOrderFront:nil];
     // process a file passed on the command line, if any
@@ -28,10 +30,9 @@
     }
 }
 
-- (BOOL)application:(NSApplication *)sender openFiles:(NSArray<NSString *> *)filenames {
+- (void)application:(NSApplication *)sender openFiles:(NSArray<NSString *> *)filenames {
     (void)sender;
     if (filenames.count) [self.window.document openURL:[NSURL fileURLWithPath:filenames[0]]];
-    return YES;
 }
 
 - (void)buildMenu {
@@ -70,8 +71,8 @@
     [imgMenu addItemWithTitle:@"Rotate Left" action:@selector(doRotL:) keyEquivalent:@"r"].target = self.window;
     [imgMenu addItemWithTitle:@"Rotate Right" action:@selector(doRotR:) keyEquivalent:@"R"].target = self.window;
     [imgMenu addItem:NSMenuItem.separatorItem];
-    [imgMenu addItemWithTitle:@"Previous" action:@selector(doPrev:) keyEquivalent:NSLeftArrowFunctionKey ? @"\x1b[D" : @""].target = self.window;
-    [imgMenu addItemWithTitle:@"Next" action:@selector(doNext:) keyEquivalent:@"\x1b[C"].target = self.window;
+    [imgMenu addItemWithTitle:@"Previous" action:@selector(doPrev:) keyEquivalent:@""].target = self.window;
+    [imgMenu addItemWithTitle:@"Next" action:@selector(doNext:) keyEquivalent:@""].target = self.window;
     imgItem.submenu = imgMenu;
 
     NSMenuItem *viewItem = [main addItemWithTitle:@"View" action:nil keyEquivalent:@""];

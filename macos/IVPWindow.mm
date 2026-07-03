@@ -217,6 +217,16 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 }
 - (void)zoomChanged { [self updateStatus]; }
 
+- (void)keyDown:(NSEvent *)e {
+    NSString *s = e.charactersIgnoringModifiers;
+    if (s.length == 1) {
+        unichar c = [s characterAtIndex:0];
+        if (c == NSLeftArrowFunctionKey)  { [_document goPrev]; return; }
+        if (c == NSRightArrowFunctionKey) { [_document goNext]; return; }
+    }
+    [super keyDown:e];
+}
+
 - (void)updateSelectButton {
     if (_document.isCurrentSelected) _selectBtn.contentTintColor = [NSColor systemBlueColor];
     else _selectBtn.contentTintColor = [NSColor labelColor];
