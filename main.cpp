@@ -2473,26 +2473,26 @@ static void Paint(HDC hdc) {
                                (Gdiplus::REAL)(bw - 22), (Gdiplus::REAL)bh), &sf, &tb);
         }
     } else {
-        Gdiplus::SolidBrush fg(Gdiplus::Color(255, 150, 152, 172));
+        Gdiplus::SolidBrush fg(C_DIM);
         Gdiplus::Font font(L"Segoe UI", 20, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
         Gdiplus::Font font2(L"Segoe UI", 13, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
         const WCHAR* m1 = L"Open an image to begin";
         const WCHAR* m2 = L"File > Open (Ctrl+O)   or   drag & drop a file here";
         Gdiplus::StringFormat sf; sf.SetAlignment(Gdiplus::StringAlignmentCenter);
         g.DrawString(m1, -1, &font, Gdiplus::RectF((Gdiplus::REAL)g_selPanelW, (Gdiplus::REAL)(top + ch / 2 - 40), (Gdiplus::REAL)cw, 36), &sf, &fg);
-        Gdiplus::SolidBrush fg2(Gdiplus::Color(255, 100, 102, 122));
+        Gdiplus::SolidBrush fg2(C_MUTED);
         g.DrawString(m2, -1, &font2, Gdiplus::RectF((Gdiplus::REAL)g_selPanelW, (Gdiplus::REAL)(top + ch / 2 + 4), (Gdiplus::REAL)cw, 24), &sf, &fg2);
     }
 
     // ---- Edit panel ----
     if (g_editMode && g_panelW > 0) {
-        Gdiplus::SolidBrush pb(Gdiplus::Color(255, 24, 24, 36));
+        Gdiplus::SolidBrush pb(C_NAMEBAR);
         g.FillRectangle(&pb, (INT)(crc.right - g_panelW), 0, g_panelW, (INT)crc.bottom);
         g.DrawLine(&sep, crc.right - g_panelW, 0, crc.right - g_panelW, crc.bottom);
     }
 
     // ---- Status bar ----
-    Gdiplus::SolidBrush sbg(C_BAR);
+    Gdiplus::SolidBrush sbg(C_STATUS);
     g.FillRectangle(&sbg, 0, g_statusTop, (INT)crc.right, g_statusH);
     g.DrawLine(&sep, 0, g_statusTop, crc.right, g_statusTop);
     {
@@ -2694,8 +2694,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_hFontName = CreateFontW(-DPI(14), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_GUI_FONT | FF_SWISS, L"Segoe UI");
-            g_hbrChip = CreateSolidBrush(RGB(38, 38, 56));
-            g_hbrPanel = CreateSolidBrush(RGB(26, 26, 38));
+            g_hbrChip = CreateSolidBrush(RGB(29, 30, 39));
+            g_hbrPanel = CreateSolidBrush(RGB(21, 22, 29));
 
             g_hEdit = CreateWindowExW(0, L"EDIT", L"No image opened",
                 WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY,
@@ -2733,13 +2733,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CTLCOLORSTATIC:
             if ((HWND)lp == g_hEdit) {
                 HDC hdc = (HDC)wp;
-                SetTextColor(hdc, RGB(238, 239, 247));
-                SetBkColor(hdc, RGB(38, 38, 56));
+                SetTextColor(hdc, RGB(235, 237, 243));
+                SetBkColor(hdc, RGB(29, 30, 39));
                 return (LRESULT)g_hbrChip;
             } else {
                 HDC hdc = (HDC)wp;
-                SetTextColor(hdc, RGB(225, 226, 240));
-                SetBkColor(hdc, RGB(26, 26, 38));
+                SetTextColor(hdc, RGB(166, 170, 182));
+                SetBkColor(hdc, RGB(21, 22, 29));
                 return (LRESULT)g_hbrPanel;
             }
             break;
