@@ -91,7 +91,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     CGImageRef _display;
     std::vector<ivp::ImageBuf> _undo, _redo;
     std::vector<std::string> _undoLabel;
-    BOOL _editing; ivp::ImageBuf _editBase, _editSmall; int _adjVals[12];
+    BOOL _editing; ivp::ImageBuf _editBase, _editSmall; int _editSW, _editSH; int _adjVals[12];
     BOOL _scanning; ivp::ImageBuf _scanBase, _scanFull; int _scanLevel;
     BOOL _cropping, _perspCrop; double _corners[4][2]; double _rcX0,_rcY0,_rcX1,_rcY1;
 }
