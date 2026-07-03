@@ -52,7 +52,12 @@
 #define ID_UNDO        1019
 #define ID_SCAN        1020
 #define ID_CROPPERSP   1021
+#define ID_EDIT        1022
 #define ID_UPDATE      1023
+#define IDC_ADJLBL     5000
+#define IDC_ADJVAL     5100
+#define IDC_ADJTRK     5200
+#define IDC_EDITRESET  5300
 #define IDC_EDITNAME   2001
 #define IDC_CHECKSEL   2002
 
@@ -73,7 +78,7 @@
 
 enum { ACT_RENAME, ACT_SELECT, ACT_SELECTALL, ACT_CLEARSEL, ACT_COPY, ACT_CUT,
        ACT_ROTATER, ACT_ROTATEL, ACT_PREV, ACT_NEXT, ACT_ZOOMIN, ACT_ZOOMOUT,
-       ACT_ZOOMFIT, ACT_CROP, ACT_CROPPERSP, ACT_SCAN, ACT_UNDO, ACT_OPEN, ACT_SAVE, ACT_COUNT };
+       ACT_ZOOMFIT, ACT_CROP, ACT_CROPPERSP, ACT_SCAN, ACT_UNDO, ACT_EDIT, ACT_OPEN, ACT_SAVE, ACT_COUNT };
 
 struct Hotkey { const WCHAR* name; UINT vk; bool ctrl; bool shift; bool alt; };
 
@@ -95,6 +100,7 @@ static const Hotkey g_defaultHotkeys[ACT_COUNT] = {
     { L"Crop (Perspective)", 'C',          false, true,  false },
     { L"Scan (Document)",   'Z',           false, false, false },
     { L"Undo",              'Z',           true,  false, false },
+    { L"Edit Photo",        'E',           false, false, false },
     { L"Open",              'O',           true,  false, false },
     { L"Save",              'S',           true,  false, false },
 };
@@ -128,6 +134,7 @@ static HFONT     g_hFont = nullptr;
 static HFONT     g_hFontBold = nullptr;
 static HFONT     g_hFontName = nullptr;
 static HBRUSH    g_hbrChip = nullptr;
+static HBRUSH    g_hbrPanel = nullptr;
 static HWND      g_btn[16] = {0};
 static HWND      g_hoverBtn = nullptr;
 static HMENU     g_hMenu = nullptr;
@@ -160,6 +167,21 @@ static Gdiplus::Bitmap* g_scanBase = nullptr;
 static std::vector<unsigned char> g_scanBaseBuf;
 static std::vector<unsigned char> g_scanFullBuf;
 
+static const int ADJ_COUNT = 12;
+static const WCHAR* const g_adjNames[ADJ_COUNT] = {
+    L"Brightness", L"Contrast", L"Exposure", L"Highlights", L"Shadows", L"Saturation",
+    L"Vibrance", L"Temperature", L"Tint", L"Gamma", L"Sharpness", L"Vignette"
+};
+static int g_adjVals[ADJ_COUNT] = {0};
+static bool g_editMode = false;
+static Gdiplus::Bitmap* g_editBase = nullptr;
+static std::vector<unsigned char> g_editSmallBuf;
+static int g_editSW = 0, g_editSH = 0;
+static HWND g_adjTrack[ADJ_COUNT] = {0};
+static HWND g_adjLbl[ADJ_COUNT] = {0};
+static HWND g_adjVal[ADJ_COUNT] = {0};
+static int g_panelW = 0;
+
 static double g_ox = 0, g_oy = 0, g_scale = 1;
 static HBITMAP g_dispCache = nullptr;
 static int g_cacheW = 0, g_cacheH = 0;
@@ -190,7 +212,8 @@ static BtnDef g_btns[] = {
     { L"",       ID_ZOUT,   42, false, true,  IC_ZOUT, true  },
     { L"",       ID_ZFIT,   46, false, true,  IC_ZFIT, false },
     { L"",       ID_ZIN,    42, false, true,  IC_ZIN,  false },
-    { L"Scan",   ID_SCAN,   72, false, false, IC_NONE, true  },
+    { L"Edit",   ID_EDIT,   68, false, false, IC_NONE, true  },
+    { L"Scan",   ID_SCAN,   72, false, false, IC_NONE, false },
     { L"Save",   ID_SAVE,   88, true,  false, IC_NONE, true  },
     { L"Folder", ID_SHOWFOLDER, 78, false, false, IC_NONE, false },
 };
@@ -309,6 +332,12 @@ static void CommitScan();
 static void CancelScan();
 static void EnterCropRect();
 static void EnterCropPersp();
+static void EnterEditMode();
+static void ApplyEdit();
+static void CancelPhotoEdit();
+static void RecomputeEditPreview();
+static void ShowEditPanel(bool show);
+static void Layout();
 static void DispatchAction(int act);
 static void OpenSettings();
 static void CheckForUpdatesNow();
@@ -372,6 +401,11 @@ static void ClearUndo() {
 }
 
 static void CloseImage() {
+    if (g_editMode) {
+        delete g_bmp; g_bmp = g_editBase; g_editBase = nullptr;
+        g_editSmallBuf.clear(); g_editSmallBuf.shrink_to_fit();
+        g_editMode = false;
+    }
     if (g_scanMode) {
         delete g_bmp; g_bmp = g_scanBase; g_scanBase = nullptr;
         g_scanBaseBuf.clear(); g_scanBaseBuf.shrink_to_fit();
@@ -440,6 +474,7 @@ static Gdiplus::Bitmap* LoadViaWIC(const std::wstring& path) {
 }
 
 static bool LoadImageFromPath(const std::wstring& path) {
+    if (g_editMode) CancelPhotoEdit();
     if (g_scanMode) CancelScan();
     g_cropping = false; g_perspCrop = false;
     Gdiplus::Bitmap* b = LoadViaWIC(path);
@@ -937,6 +972,210 @@ static void CancelScan() {
     UpdateStatus();
 }
 
+static float clampf(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
+static float sstepf(float e0, float e1, float x) { float t = (x - e0) / (e1 - e0); if (t < 0) t = 0; if (t > 1) t = 1; return t * t * (3 - 2 * t); }
+
+static void AdjustBuf(const unsigned char* src, int W, int H, const int* v, unsigned char* dst) {
+    float exposure = powf(2.0f, v[2] / 100.0f * 2.0f);
+    float contrast = 1.0f + v[1] / 100.0f;
+    float bright = v[0] / 100.0f * 0.5f;
+    float gamma = powf(2.0f, -v[9] / 100.0f);
+    float sat = 1.0f + v[5] / 100.0f;
+    float vib = v[6] / 100.0f;
+    float temp = v[7] / 100.0f * 0.18f;
+    float tint = v[8] / 100.0f * 0.18f;
+    float hl = v[3] / 100.0f * 0.5f, shw = v[4] / 100.0f * 0.5f;
+    float vig = v[11] / 100.0f;
+    float cx = (W - 1) * 0.5f, cy = (H - 1) * 0.5f;
+    float maxd = sqrtf(cx * cx + cy * cy); if (maxd < 1) maxd = 1;
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            const unsigned char* p = src + ((size_t)y * W + x) * 4;
+            float r = p[2] / 255.0f, g = p[1] / 255.0f, b = p[0] / 255.0f;
+            r *= exposure; g *= exposure; b *= exposure;
+            float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+            float hw = sstepf(0.5f, 1.0f, lum), swd = 1.0f - sstepf(0.0f, 0.5f, lum);
+            r += hl * hw; g += hl * hw; b += hl * hw;
+            r += shw * swd; g += shw * swd; b += shw * swd;
+            r += bright; g += bright; b += bright;
+            r = (r - 0.5f) * contrast + 0.5f; g = (g - 0.5f) * contrast + 0.5f; b = (b - 0.5f) * contrast + 0.5f;
+            r = powf(clampf(r), gamma); g = powf(clampf(g), gamma); b = powf(clampf(b), gamma);
+            r += temp; b -= temp; g -= tint;
+            float lum2 = 0.299f * r + 0.587f * g + 0.114f * b;
+            r = lum2 + (r - lum2) * sat; g = lum2 + (g - lum2) * sat; b = lum2 + (b - lum2) * sat;
+            float mx = r; if (g > mx) mx = g; if (b > mx) mx = b; float mn = r; if (g < mn) mn = g; if (b < mn) mn = b;
+            float amt = vib * (1.0f - (mx - mn));
+            r = lum2 + (r - lum2) * (1.0f + amt); g = lum2 + (g - lum2) * (1.0f + amt); b = lum2 + (b - lum2) * (1.0f + amt);
+            float dx = x - cx, dy = y - cy; float d = sqrtf(dx * dx + dy * dy) / maxd;
+            float fc = 1.0f - vig * d * d * 1.2f;
+            r *= fc; g *= fc; b *= fc;
+            unsigned char* q = dst + ((size_t)y * W + x) * 4;
+            q[2] = (unsigned char)(clampf(r) * 255.0f + 0.5f);
+            q[1] = (unsigned char)(clampf(g) * 255.0f + 0.5f);
+            q[0] = (unsigned char)(clampf(b) * 255.0f + 0.5f);
+            q[3] = 255;
+        }
+    }
+    if (v[10] != 0) {
+        float s = v[10] / 100.0f * 1.2f;
+        std::vector<unsigned char> tmp((size_t)W * H * 4);
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+            float rr = 0, gg = 0, bb = 0; int n = 0;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                int xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                const unsigned char* pp = dst + ((size_t)yy * W + xx) * 4;
+                rr += pp[2]; gg += pp[1]; bb += pp[0]; n++;
+            }
+            unsigned char* o = tmp.data() + ((size_t)y * W + x) * 4;
+            o[2] = (unsigned char)(rr / n); o[1] = (unsigned char)(gg / n); o[0] = (unsigned char)(bb / n); o[3] = 255;
+        }
+        for (size_t i = 0; i < (size_t)W * H; i++) {
+            unsigned char* q = dst + i * 4; const unsigned char* t = tmp.data() + i * 4;
+            for (int k = 0; k < 3; k++) {
+                float c = q[k] / 255.0f + s * (q[k] / 255.0f - t[k] / 255.0f);
+                if (c < 0) c = 0; if (c > 1) c = 1; q[k] = (unsigned char)(c * 255 + 0.5);
+            }
+        }
+    }
+}
+
+static Gdiplus::Bitmap* MakeAdjPreview() {
+    if (g_editSW <= 0) return nullptr;
+    std::vector<unsigned char> tmp((size_t)g_editSW * g_editSH * 4);
+    AdjustBuf(g_editSmallBuf.data(), g_editSW, g_editSH, g_adjVals, tmp.data());
+    Gdiplus::Bitmap* nb = new Gdiplus::Bitmap(g_editSW, g_editSH, PixelFormat32bppARGB);
+    Gdiplus::Rect rect(0, 0, g_editSW, g_editSH);
+    Gdiplus::BitmapData dd = {};
+    nb->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &dd);
+    for (int y = 0; y < g_editSH; y++) memcpy((BYTE*)dd.Scan0 + (size_t)y * dd.Stride, tmp.data() + (size_t)y * g_editSW * 4, (size_t)g_editSW * 4);
+    nb->UnlockBits(&dd);
+    return nb;
+}
+
+static void BuildEditSmallBase() {
+    if (!g_editBase) return;
+    int W = (INT)g_editBase->GetWidth(), H = (INT)g_editBase->GetHeight();
+    Gdiplus::Rect rect(0, 0, W, H); Gdiplus::BitmapData sd = {};
+    if (g_editBase->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &sd) != Gdiplus::Ok) return;
+    std::vector<int> acc((size_t)g_editSW * g_editSH * 3, 0), cnt((size_t)g_editSW * g_editSH, 0);
+    for (int y = 0; y < H; y++) {
+        const unsigned char* row = (const unsigned char*)sd.Scan0 + (size_t)y * sd.Stride;
+        int sy = (int)(y * ((double)g_editSH / H)); if (sy >= g_editSH) sy = g_editSH - 1;
+        for (int x = 0; x < W; x++) {
+            int sx = (int)(x * ((double)g_editSW / W)); if (sx >= g_editSW) sx = g_editSW - 1;
+            size_t o = (size_t)sy * g_editSW + sx;
+            acc[o * 3 + 0] += row[x * 4 + 2]; acc[o * 3 + 1] += row[x * 4 + 1]; acc[o * 3 + 2] += row[x * 4 + 0]; cnt[o]++;
+        }
+    }
+    g_editBase->UnlockBits(&sd);
+    g_editSmallBuf.assign((size_t)g_editSW * g_editSH * 4, 0);
+    for (size_t i = 0; i < (size_t)g_editSW * g_editSH; i++) {
+        int c = cnt[i] ? cnt[i] : 1;
+        g_editSmallBuf[i * 4 + 2] = (unsigned char)(acc[i * 3 + 0] / c);
+        g_editSmallBuf[i * 4 + 1] = (unsigned char)(acc[i * 3 + 1] / c);
+        g_editSmallBuf[i * 4 + 0] = (unsigned char)(acc[i * 3 + 2] / c);
+        g_editSmallBuf[i * 4 + 3] = 255;
+    }
+}
+
+static void UpdateAdjValLabel(int i) {
+    if (!g_adjVal[i]) return;
+    int v = g_adjVals[i]; WCHAR buf[16];
+    if (v > 0) swprintf(buf, 16, L"+%d", v); else swprintf(buf, 16, L"%d", v);
+    SetWindowTextW(g_adjVal[i], buf);
+}
+static void ShowEditPanel(bool show) {
+    HWND t = GetDlgItem(g_hMain, 4900);
+    if (t) ShowWindow(t, show ? SW_SHOW : SW_HIDE);
+    for (int i = 0; i < ADJ_COUNT; i++) {
+        if (g_adjLbl[i]) ShowWindow(g_adjLbl[i], show ? SW_SHOW : SW_HIDE);
+        if (g_adjVal[i]) ShowWindow(g_adjVal[i], show ? SW_SHOW : SW_HIDE);
+        if (g_adjTrack[i]) ShowWindow(g_adjTrack[i], show ? SW_SHOW : SW_HIDE);
+    }
+    HWND r = GetDlgItem(g_hMain, IDC_EDITRESET);
+    if (r) ShowWindow(r, show ? SW_SHOW : SW_HIDE);
+}
+static void CreateEditPanel() {
+    HWND title = CreateWindowW(L"STATIC", L"Adjust", WS_CHILD | SS_CENTER, 0, 0, 10, 10, g_hMain, (HMENU)(INT_PTR)4900, g_hInst, nullptr);
+    SendMessageW(title, WM_SETFONT, (WPARAM)g_hFontBold, TRUE);
+    for (int i = 0; i < ADJ_COUNT; i++) {
+        g_adjLbl[i] = CreateWindowW(L"STATIC", g_adjNames[i], WS_CHILD, 0, 0, 10, 10, g_hMain, (HMENU)(INT_PTR)(IDC_ADJLBL + i), g_hInst, nullptr);
+        SendMessageW(g_adjLbl[i], WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        g_adjVal[i] = CreateWindowW(L"STATIC", L"0", WS_CHILD | SS_RIGHT, 0, 0, 10, 10, g_hMain, (HMENU)(INT_PTR)(IDC_ADJVAL + i), g_hInst, nullptr);
+        SendMessageW(g_adjVal[i], WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        g_adjTrack[i] = CreateWindowExW(0, TRACKBAR_CLASSW, L"", WS_CHILD | TBS_HORZ | TBS_NOTICKS, 0, 0, 10, 10, g_hMain, (HMENU)(INT_PTR)(IDC_ADJTRK + i), g_hInst, nullptr);
+        SendMessageW(g_adjTrack[i], TBM_SETRANGE, FALSE, MAKELONG(-100, 100));
+        SendMessageW(g_adjTrack[i], TBM_SETPOS, TRUE, 0);
+        SendMessageW(g_adjTrack[i], TBM_SETLINESIZE, 0, 1);
+        SendMessageW(g_adjTrack[i], TBM_SETPAGESIZE, 0, 5);
+    }
+    HWND reset = CreateWindowW(L"BUTTON", L"Reset", WS_CHILD, 0, 0, 10, 10, g_hMain, (HMENU)(INT_PTR)IDC_EDITRESET, g_hInst, nullptr);
+    SendMessageW(reset, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+}
+static void EnterEditMode() {
+    if (!g_bmp || g_editMode) return;
+    g_editBase = g_bmp;
+    int W = (INT)g_bmp->GetWidth(), H = (INT)g_bmp->GetHeight();
+    double f = 700.0 / (std::max)(W, H); if (f > 1) f = 1;
+    g_editSW = (std::max)(1, (int)(W * f + 0.5)); g_editSH = (std::max)(1, (int)(H * f + 0.5));
+    BuildEditSmallBase();
+    for (int i = 0; i < ADJ_COUNT; i++) { g_adjVals[i] = 0; if (g_adjTrack[i]) SendMessageW(g_adjTrack[i], TBM_SETPOS, TRUE, 0); UpdateAdjValLabel(i); }
+    g_bmp = nullptr;
+    g_editMode = true;
+    ShowEditPanel(true);
+    Layout();
+    g_bmp = MakeAdjPreview();
+    RebuildDisplayCache();
+    InvalidateRect(g_hMain, nullptr, FALSE);
+    UpdateStatus();
+}
+static void RecomputeEditPreview() {
+    if (!g_editMode) return;
+    Gdiplus::Bitmap* nb = MakeAdjPreview();
+    delete g_bmp; g_bmp = nb;
+    RebuildDisplayCache();
+    InvalidateRect(g_hMain, nullptr, FALSE);
+}
+static void ResetEdit() {
+    for (int i = 0; i < ADJ_COUNT; i++) { g_adjVals[i] = 0; if (g_adjTrack[i]) SendMessageW(g_adjTrack[i], TBM_SETPOS, TRUE, 0); UpdateAdjValLabel(i); }
+    RecomputeEditPreview();
+}
+static void ApplyEdit() {
+    if (!g_editMode) return;
+    int W = (INT)g_editBase->GetWidth(), H = (INT)g_editBase->GetHeight();
+    Gdiplus::Rect rect(0, 0, W, H); Gdiplus::BitmapData sd = {};
+    if (g_editBase->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &sd) == Gdiplus::Ok) {
+        std::vector<unsigned char> full((size_t)W * H * 4);
+        for (int y = 0; y < H; y++) memcpy(full.data() + (size_t)y * W * 4, (BYTE*)sd.Scan0 + (size_t)y * sd.Stride, (size_t)W * 4);
+        g_editBase->UnlockBits(&sd);
+        std::vector<unsigned char> out((size_t)W * H * 4);
+        AdjustBuf(full.data(), W, H, g_adjVals, out.data());
+        Gdiplus::Bitmap* nb = new Gdiplus::Bitmap(W, H, PixelFormat32bppARGB);
+        Gdiplus::BitmapData dd = {}; nb->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &dd);
+        for (int y = 0; y < H; y++) memcpy((BYTE*)dd.Scan0 + (size_t)y * dd.Stride, out.data() + (size_t)y * W * 4, (size_t)W * 4);
+        nb->UnlockBits(&dd);
+        g_undoStack.push_back(g_editBase);
+        delete g_bmp; g_bmp = nb;
+    }
+    g_editBase = nullptr;
+    g_editSmallBuf.clear(); g_editSmallBuf.shrink_to_fit();
+    g_editMode = false; ShowEditPanel(false); Layout();
+    g_dirty = true;
+    DoSave();
+    RebuildDisplayCache();
+    InvalidateRect(g_hMain, nullptr, FALSE);
+    UpdateStatus();
+}
+static void CancelPhotoEdit() {
+    if (!g_editMode) return;
+    delete g_bmp; g_bmp = g_editBase; g_editBase = nullptr;
+    g_editSmallBuf.clear(); g_editSmallBuf.shrink_to_fit();
+    g_editMode = false; ShowEditPanel(false); Layout();
+    RebuildDisplayCache();
+    InvalidateRect(g_hMain, nullptr, FALSE);
+    UpdateStatus();
+}
+
 static void DoSave() {
     if (!g_bmp) return;
     bool canEncode = true;
@@ -1119,6 +1358,7 @@ static void DispatchAction(int act) {
         case ACT_ZOOMFIT:   if (g_bmp) { g_zoom = 1.0; RebuildDisplayCache(); InvalidateRect(g_hMain, nullptr, FALSE); UpdateStatus(); } break;
         case ACT_CROP:      EnterCropRect(); break;
         case ACT_CROPPERSP: EnterCropPersp(); break;
+        case ACT_EDIT:      EnterEditMode(); break;
         case ACT_SCAN:      EnterScanMode(); break;
         case ACT_UNDO:      DoUndo(); break;
         case ACT_OPEN:      DoOpen(); break;
@@ -1132,6 +1372,30 @@ static std::wstring SettingsPath() {
     std::wstring dir = std::wstring(appdata) + L"\\ImageViewerPro";
     CreateDirectoryW(dir.c_str(), nullptr);
     return dir + L"\\settings.ini";
+}
+static void SaveWindowState() {
+    if (!g_hMain) return;
+    WINDOWPLACEMENT wp = { sizeof(wp) };
+    GetWindowPlacement(g_hMain, &wp);
+    RECT r = wp.rcNormalPosition;
+    WCHAR buf[64]; swprintf(buf, 64, L"%ld,%ld,%ld,%ld", r.left, r.top, r.right, r.bottom);
+    std::wstring p = SettingsPath();
+    WritePrivateProfileStringW(L"Window", L"Rect", buf, p.c_str());
+    WritePrivateProfileStringW(L"Window", L"Max", (wp.flags & WPF_RESTORETOMAXIMIZED) ? L"1" : L"0", p.c_str());
+}
+static void RestoreWindowState() {
+    std::wstring p = SettingsPath();
+    WCHAR buf[128] = {0};
+    GetPrivateProfileStringW(L"Window", L"Rect", L"", buf, 128, p.c_str());
+    if (buf[0]) {
+        int a, b, c, d;
+        if (swscanf(buf, L"%d,%d,%d,%d", &a, &b, &c, &d) == 4 && c > a && d > b) {
+            SetWindowPos(g_hMain, nullptr, a, b, c - a, d - b, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    WCHAR m[8] = {0};
+    GetPrivateProfileStringW(L"Window", L"Max", L"0", m, 8, p.c_str());
+    if (m[0] == L'1') ShowWindow(g_hMain, SW_MAXIMIZE);
 }
 static void LoadHotkeys() {
     for (int i = 0; i < ACT_COUNT; i++) g_hotkeys[i] = g_defaultHotkeys[i];
@@ -1168,6 +1432,7 @@ static void UpdateMenuHotkeys() {
         { ID_ROTL,   ACT_ROTATEL, L"Rotate &Left" },
         { ID_ROTR,   ACT_ROTATER, L"Rotate &Right" },
         { ID_SCAN,   ACT_SCAN,    L"&Scan Document" },
+        { ID_EDIT,   ACT_EDIT,    L"&Adjust Photo" },
         { ID_CROP,      ACT_CROP,      L"Crop (Rectangle)" },
         { ID_CROPPERSP, ACT_CROPPERSP, L"Crop (Perspective / Auto)" },
         { ID_ZIN,    ACT_ZOOMIN,  L"Zoom &In" },
@@ -1189,7 +1454,8 @@ static void UpdateMenuHotkeys() {
 }
 
 static void UpdateStatus() {
-    if (g_scanMode) g_sLeft = L"Scan " + std::to_wstring(g_scanLevel) + L"%  \u2014  Up/Down intensity, Enter to save, Esc to cancel";
+    if (g_editMode) g_sLeft = L"Adjust \u2014 drag sliders, Enter to apply, Esc to cancel";
+    else if (g_scanMode) g_sLeft = L"Scan " + std::to_wstring(g_scanLevel) + L"%  \u2014  Up/Down intensity, Enter to save, Esc to cancel";
     else if (g_editing) g_sLeft = L"Renaming \u2014 Enter to save, Esc to cancel";
     else if (g_cropping) g_sLeft = g_perspCrop ? L"Crop \u2014 drag corners to adjust, Enter to apply, Esc to cancel"
                                               : L"Crop \u2014 drag to draw a rectangle, Enter to apply, Esc to cancel";
@@ -1247,8 +1513,28 @@ static void Layout() {
 
     g_canvasTop = g_tbh;
     g_canvasLeft = 0;
-    g_canvasW = rc.right;
+    g_panelW = g_editMode ? DPI(284) : 0;
+    g_canvasW = rc.right - g_panelW;
     g_canvasH = g_statusTop - g_tbh;
+
+    if (g_editMode) {
+        int x0 = rc.right - g_panelW;
+        int innerX = x0 + DPI(16);
+        int innerW = g_panelW - DPI(32);
+        HWND title = GetDlgItem(g_hMain, 4900);
+        if (title) MoveWindow(title, x0 + DPI(8), g_tbh + DPI(10), g_panelW - DPI(16), DPI(22), TRUE);
+        int yy = g_tbh + DPI(42);
+        int rowH = (g_statusTop - g_tbh - DPI(90)) / ADJ_COUNT;
+        if (rowH < DPI(40)) rowH = DPI(40);
+        for (int i = 0; i < ADJ_COUNT; i++) {
+            if (g_adjLbl[i]) MoveWindow(g_adjLbl[i], innerX, yy, innerW - DPI(44), DPI(18), TRUE);
+            if (g_adjVal[i]) MoveWindow(g_adjVal[i], x0 + g_panelW - DPI(60), yy, DPI(44), DPI(18), TRUE);
+            if (g_adjTrack[i]) MoveWindow(g_adjTrack[i], innerX, yy + DPI(20), innerW, DPI(22), TRUE);
+            yy += rowH;
+        }
+        HWND r = GetDlgItem(g_hMain, IDC_EDITRESET);
+        if (r) MoveWindow(r, innerX, g_statusTop - DPI(40), innerW, DPI(30), TRUE);
+    }
 }
 
 static void MakeRoundPath(Gdiplus::GraphicsPath& path, int x, int y, int w, int h, int r) {
@@ -1484,6 +1770,12 @@ static void Paint(HDC hdc) {
     Gdiplus::SolidBrush sbg(C_BAR);
     g.FillRectangle(&sbg, 0, g_statusTop, crc.right, g_statusH);
     g.DrawLine(&sep, 0, g_statusTop, crc.right, g_statusTop);
+
+    if (g_editMode && g_panelW > 0) {
+        Gdiplus::SolidBrush pb(Gdiplus::Color(255, 24, 24, 36));
+        g.FillRectangle(&pb, crc.right - g_panelW, 0, g_panelW, crc.bottom);
+        g.DrawLine(&sep, crc.right - g_panelW, 0, crc.right - g_panelW, crc.bottom);
+    }
     {
         Gdiplus::Font sf(mem, g_hFont);
         Gdiplus::SolidBrush stl(C_DIM);
@@ -1566,6 +1858,8 @@ static void OnCommand(WPARAM wp, LPARAM lp) {
         case ID_SETTINGS: OpenSettings(); break;
         case ID_CROP:      EnterCropRect(); break;
         case ID_CROPPERSP: EnterCropPersp(); break;
+        case ID_EDIT:      EnterEditMode(); break;
+        case IDC_EDITRESET: ResetEdit(); break;
         case ID_ZIN:   ZoomBy(1.2); break;
         case ID_ZOUT:  ZoomBy(1.0 / 1.2); break;
         case ID_ZFIT:  if (g_bmp) { g_zoom = 1.0; RebuildDisplayCache(); InvalidateRect(g_hMain, nullptr, FALSE); UpdateStatus(); } break;
@@ -1610,6 +1904,7 @@ static HMENU BuildMenu() {
     AppendMenuW(mImg, MF_STRING, ID_ROTL, L"Rotate &Left");
     AppendMenuW(mImg, MF_STRING, ID_ROTR, L"Rotate &Right");
     AppendMenuW(mImg, MF_STRING, ID_SCAN, L"&Scan Document");
+    AppendMenuW(mImg, MF_STRING, ID_EDIT, L"&Adjust Photo...");
     AppendMenuW(mImg, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(mImg, MF_STRING, ID_CROP, L"Crop (Rectangle)");
     AppendMenuW(mImg, MF_STRING, ID_CROPPERSP, L"Crop (Perspective / Auto)");
@@ -1659,6 +1954,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_GUI_FONT | FF_SWISS, L"Segoe UI");
             g_hbrChip = CreateSolidBrush(RGB(38, 38, 56));
+            g_hbrPanel = CreateSolidBrush(RGB(26, 26, 38));
 
             g_hEdit = CreateWindowExW(0, L"EDIT", L"No image opened",
                 WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_READONLY,
@@ -1667,6 +1963,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(DPI(2), DPI(2)));
 
             CreateButtons();
+            CreateEditPanel();
             DragAcceptFiles(hWnd, TRUE);
             EnableButtons(false);
             UpdateStatus();
@@ -1698,6 +1995,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
                 SetTextColor(hdc, RGB(238, 239, 247));
                 SetBkColor(hdc, RGB(38, 38, 56));
                 return (LRESULT)g_hbrChip;
+            } else {
+                HDC hdc = (HDC)wp;
+                SetTextColor(hdc, RGB(225, 226, 240));
+                SetBkColor(hdc, RGB(26, 26, 38));
+                return (LRESULT)g_hbrPanel;
             }
             break;
         case WM_LBUTTONDOWN: {
@@ -1758,6 +2060,18 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             DragFinish(drop);
             return 0;
         }
+        case WM_HSCROLL: {
+            HWND hTrk = (HWND)lp;
+            int idx = -1;
+            for (int i = 0; i < ADJ_COUNT; i++) if (g_adjTrack[i] == hTrk) { idx = i; break; }
+            if (idx >= 0) {
+                g_adjVals[idx] = (int)SendMessageW(hTrk, TBM_GETPOS, 0, 0);
+                UpdateAdjValLabel(idx);
+                int code = LOWORD(wp);
+                if (code != TB_THUMBTRACK) RecomputeEditPreview();
+            }
+            return 0;
+        }
         case WM_COMMAND:
             OnCommand(wp, lp);
             return 0;
@@ -1783,6 +2097,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_DESTROY:
+            SaveWindowState();
             PostQuitMessage(0);
             return 0;
     }
@@ -2040,6 +2355,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     ShowWindow(g_hMain, nCmdShow);
     UpdateWindow(g_hMain);
+    RestoreWindowState();
     SetTimer(g_hMain, 2, 2500, nullptr);
 
     if (!g_openOnStart.empty()) LoadImageFromPath(g_openOnStart);
@@ -2051,14 +2367,16 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
             UINT vk = (UINT)msg.wParam;
-            if (g_scanMode) {
+            if (g_editMode) {
+                if (vk == VK_RETURN) { ApplyEdit(); continue; }
+                if (vk == VK_ESCAPE) { CancelPhotoEdit(); continue; }
+            } else if (g_scanMode) {
                 if (vk == VK_UP) { AdjustScan(5); continue; }
                 if (vk == VK_DOWN) { AdjustScan(-5); continue; }
                 if (vk == VK_RETURN) { CommitScan(); continue; }
                 if (vk == VK_ESCAPE) { CancelScan(); continue; }
                 continue;
-            }
-            if (vk == VK_ESCAPE) {
+            } else if (vk == VK_ESCAPE) {
                 if (g_cropping) { g_cropping = false; g_perspCrop = false; InvalidateRect(g_hMain, nullptr, FALSE); UpdateStatus(); continue; }
                 if (g_editing) { CancelEdit(); continue; }
             } else if (g_cropping) {
@@ -2081,6 +2399,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     if (g_hFontBold) DeleteObject(g_hFontBold);
     if (g_hFontName) DeleteObject(g_hFontName);
     if (g_hbrChip) DeleteObject(g_hbrChip);
+    if (g_hbrPanel) DeleteObject(g_hbrPanel);
     CoUninitialize();
     Gdiplus::GdiplusShutdown(gdiToken);
     return (int)msg.wParam;
