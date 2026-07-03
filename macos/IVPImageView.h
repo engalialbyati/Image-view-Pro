@@ -4,5 +4,6 @@
 @interface IVPImageView : NSView
 @property (nonatomic, weak) IVPDocument *document;
 - (void)fitToWindow;
+- (void)zoomBy:(double)f;
 - (double)zoomPercent;
 @end
