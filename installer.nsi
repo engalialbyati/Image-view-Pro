@@ -1,7 +1,7 @@
 !include "MUI2.nsh"
 
 !define APPNAME "Image Viewer Pro"
-!define APPVER "1.2.1"
+!define APPVER "1.2.2"
 !define PROGID "ImageViewerPro.Image"
 !define PUB "Image Viewer Pro"
 
@@ -14,7 +14,7 @@ InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin
 
-VIProductVersion "1.2.1.0"
+VIProductVersion "1.2.2.0"
 VIAddVersionKey "ProductName" "${APPNAME}"
 VIAddVersionKey "FileDescription" "${APPNAME} Installer"
 VIAddVersionKey "FileVersion" "${APPVER}"

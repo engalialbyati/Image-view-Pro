@@ -131,7 +131,7 @@ static const WCHAR* const g_imageExts[] = {
     L".tif", L".tiff", L".webp", L".svg", L".ico", L".heic", L".heif", L".wmf", L".emf"
 };
 
-static const WCHAR* const APP_VERSION  = L"1.2.1";
+static const WCHAR* const APP_VERSION  = L"1.2.2";
 static const WCHAR* const GH_API       = L"https://api.github.com/repos/engalialbyati/Image-view-Pro/releases/latest";
 static const WCHAR* const GH_RELEASES  = L"https://github.com/engalialbyati/Image-view-Pro/releases";
 static std::wstring g_updTag, g_updUrl;
@@ -2465,6 +2465,7 @@ static void Paint(HDC hdc) {
 
     // ---- Canvas ----
     g.FillRectangle(&bgBrush, g_selPanelW, top, cw, ch);
+    g.SetClip(Gdiplus::Rect(g_selPanelW, g_canvasTop, g_canvasW, g_canvasH));
     if (g_bmp && g_dispCache) {
         HDC cdc = CreateCompatibleDC(mem);
         HBITMAP oldC = (HBITMAP)SelectObject(cdc, g_dispCache);
@@ -2503,6 +2504,7 @@ static void Paint(HDC hdc) {
         Gdiplus::SolidBrush fg2(C_MUTED);
         g.DrawString(m2, -1, &font2, Gdiplus::RectF((Gdiplus::REAL)g_selPanelW, (Gdiplus::REAL)(top + ch / 2 + 4), (Gdiplus::REAL)cw, 24), &sf, &fg2);
     }
+    g.ResetClip();
 
     // ---- Edit panel ----
     if (g_editMode && g_panelW > 0) {
