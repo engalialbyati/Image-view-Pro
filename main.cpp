@@ -131,7 +131,7 @@ static const WCHAR* const g_imageExts[] = {
     L".tif", L".tiff", L".webp", L".svg", L".ico", L".heic", L".heif", L".wmf", L".emf"
 };
 
-static const WCHAR* const APP_VERSION  = L"1.2.0";
+static const WCHAR* const APP_VERSION  = L"1.2.1";
 static const WCHAR* const GH_API       = L"https://api.github.com/repos/engalialbyati/Image-view-Pro/releases/latest";
 static const WCHAR* const GH_RELEASES  = L"https://github.com/engalialbyati/Image-view-Pro/releases";
 static std::wstring g_updTag, g_updUrl;
@@ -215,6 +215,11 @@ static int g_panelW = 0;
 static double g_ox = 0, g_oy = 0, g_scale = 1;
 static HBITMAP g_dispCache = nullptr;
 static int g_cacheW = 0, g_cacheH = 0;
+static double g_panX = 0, g_panY = 0;
+static double g_baseOx = 0, g_baseOy = 0;
+static bool g_panning = false;
+static POINT g_panStart = {};
+static double g_panStartX = 0, g_panStartY = 0;
 static int g_canvasTop = 0, g_canvasLeft = 0, g_canvasW = 0, g_canvasH = 0;
 static int g_tabH = 0, g_ribbonH = 0, g_nameBarH = 0;
 static int g_topChrome = 0;
@@ -690,19 +695,34 @@ static void RebuildDisplayCache() {
     if (fit <= 0) fit = 1;
     double scale = fit * g_zoom;
     int dw = (int)(iw * scale), dh = (int)(ih * scale);
+    if (dw < 1) dw = 1; if (dh < 1) dh = 1;
     int ox = (cw - dw) / 2;
     int oy = (ch - dh) / 2;
-    g_ox = (double)(g_canvasLeft + ox); g_oy = (double)(g_canvasTop + oy); g_scale = scale;
-    Gdiplus::Bitmap cache(cw, ch, PixelFormat32bppARGB);
+    g_scale = scale;
+    g_baseOx = (double)(g_canvasLeft + ox);
+    g_baseOy = (double)(g_canvasTop + oy);
+
+    // Clamp pan so the image can't be dragged out of view (no pan when it fits).
+    double maxPanX = (dw > cw) ? (dw - cw) / 2.0 : 0.0;
+    double maxPanY = (dh > ch) ? (dh - ch) / 2.0 : 0.0;
+    if (g_panX >  maxPanX) g_panX =  maxPanX;
+    if (g_panX < -maxPanX) g_panX = -maxPanX;
+    if (g_panY >  maxPanY) g_panY =  maxPanY;
+    if (g_panY < -maxPanY) g_panY = -maxPanY;
+    g_ox = g_baseOx + g_panX;
+    g_oy = g_baseOy + g_panY;
+
+    // Render the scaled image once (image-sized); panning just repositions this cache.
+    Gdiplus::Bitmap cache(dw, dh, PixelFormat32bppARGB);
     Gdiplus::Graphics gc(&cache);
     gc.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-    Gdiplus::SolidBrush bgf(Gdiplus::Color(255, 16, 16, 24));
-    gc.FillRectangle(&bgf, 0, 0, cw, ch);
-    gc.DrawImage(g_bmp, Gdiplus::Rect(ox, oy, dw, dh), 0, 0, iw, ih, Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush bgf(C_CANVAS);
+    gc.FillRectangle(&bgf, 0, 0, dw, dh);
+    gc.DrawImage(g_bmp, Gdiplus::Rect(0, 0, dw, dh), 0, 0, iw, ih, Gdiplus::UnitPixel);
     HBITMAP hb = nullptr;
     cache.GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hb);
     g_dispCache = hb;
-    g_cacheW = cw; g_cacheH = ch;
+    g_cacheW = dw; g_cacheH = dh;
 }
 
 static void InitCropCorners() {
@@ -2448,7 +2468,7 @@ static void Paint(HDC hdc) {
     if (g_bmp && g_dispCache) {
         HDC cdc = CreateCompatibleDC(mem);
         HBITMAP oldC = (HBITMAP)SelectObject(cdc, g_dispCache);
-        BitBlt(mem, g_selPanelW, g_canvasTop, g_cacheW, g_cacheH, cdc, 0, 0, SRCCOPY);
+        BitBlt(mem, (int)g_ox, (int)g_oy, g_cacheW, g_cacheH, cdc, 0, 0, SRCCOPY);
         SelectObject(cdc, oldC);
         DeleteDC(cdc);
 
@@ -2801,6 +2821,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g_rcX0 = g_rcX1 = ix; g_rcY0 = g_rcY1 = iy;
                     g_dragging = true; SetCapture(hWnd);
                 }
+            } else if (g_bmp && (g_cacheW > g_canvasW || g_cacheH > g_canvasH)) {
+                g_panning = true;
+                g_panStart = p;
+                g_panStartX = g_panX; g_panStartY = g_panY;
+                SetCapture(hWnd);
             }
             return 0;
         }
@@ -2816,6 +2841,20 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (g_selScroll < 0) g_selScroll = 0;
                 if (g_selScroll > g_selMaxScroll) g_selScroll = g_selMaxScroll;
                 InvalidateRect(hWnd, nullptr, FALSE);
+                return 0;
+            }
+            if (g_panning) {
+                g_panX = g_panStartX + (p.x - g_panStart.x);
+                g_panY = g_panStartY + (p.y - g_panStart.y);
+                double maxPanX = (g_cacheW > g_canvasW) ? (g_cacheW - g_canvasW) / 2.0 : 0.0;
+                double maxPanY = (g_cacheH > g_canvasH) ? (g_cacheH - g_canvasH) / 2.0 : 0.0;
+                if (g_panX >  maxPanX) g_panX =  maxPanX;
+                if (g_panX < -maxPanX) g_panX = -maxPanX;
+                if (g_panY >  maxPanY) g_panY =  maxPanY;
+                if (g_panY < -maxPanY) g_panY = -maxPanY;
+                g_ox = g_baseOx + g_panX; g_oy = g_baseOy + g_panY;
+                RECT crc2 = { g_selPanelW, g_canvasTop, g_selPanelW + g_canvasW, g_statusTop };
+                InvalidateRect(hWnd, &crc2, FALSE);
                 return 0;
             }
             if (g_dragging && g_cropping && g_bmp) {
@@ -2842,8 +2881,21 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_LBUTTONUP: {
             if (g_selDragScroll) { g_selDragScroll = false; ReleaseCapture(); }
+            if (g_panning) { g_panning = false; ReleaseCapture(); }
             if (g_dragging) { g_dragging = false; g_dragCorner = -1; ReleaseCapture(); InvalidateRect(hWnd, nullptr, FALSE); }
             return 0;
+        }
+        case WM_SETCURSOR: {
+            if (LOWORD(lp) == HTCLIENT && (HWND)wp == hWnd) {
+                POINT pc; GetCursorPos(&pc); ScreenToClient(hWnd, &pc);
+                bool inCanvas = pc.x >= g_selPanelW && pc.y >= g_canvasTop && pc.y < g_statusTop;
+                bool pannable = g_bmp && !g_cropping && (g_cacheW > g_canvasW || g_cacheH > g_canvasH);
+                if (inCanvas && (g_panning || pannable)) {
+                    SetCursor(LoadCursor(nullptr, g_panning ? IDC_SIZEALL : IDC_SIZEALL));
+                    return TRUE;
+                }
+            }
+            return DefWindowProcW(hWnd, msg, wp, lp);
         }
         case WM_MOUSEWHEEL: {
             POINT ms = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
