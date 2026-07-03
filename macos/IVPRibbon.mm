@@ -33,8 +33,8 @@
 - (CGFloat)ribbonHeight { return _tabStripH + 74; }
 
 - (void)buildModel {
-    id mk = ^NSDictionary*(NSString *name, NSString *symbol, NSString *title) {
-        return @{@"action": NSStringFromSelector(NSSelectorFromString(name)), @"symbol": symbol, @"title": title};
+    NSDictionary* (^mk)(NSString *, NSString *, NSString *) = ^NSDictionary*(NSString *selName, NSString *symbol, NSString *title) {
+        return @{@"action": NSStringFromSelector(NSSelectorFromString(selName)), @"symbol": symbol, @"title": title};
     };
     NSArray *home = @[
         @{@"name": @"File",      @"items": @[ mk(@"doOpen:", @"folder", @"Open") ]},
