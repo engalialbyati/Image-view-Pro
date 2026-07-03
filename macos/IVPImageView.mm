@@ -39,7 +39,7 @@
     double baseX = (vw - dw) / 2.0 + _panX;
     double baseY = (vh - dh) / 2.0 + _panY;
 
-    CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
+    CGContextRef ctx = [[NSGraphicsContext currentContext] CGContext];
     CGContextSaveGState(ctx);
     // Clip to this view so a zoomed image never leaks outside the canvas.
     CGContextClipToRect(ctx, NSRectToCGRect(self.bounds));
