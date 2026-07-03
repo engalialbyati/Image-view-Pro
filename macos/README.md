@@ -10,19 +10,66 @@ CoreGraphics / ImageIO, and sharing the same portable C++ image-processing core
 > undo/redo. Perspective crop, document-scan, and the adjustments panel exist in
 > the core and are pending UI wiring.
 
-## Build
+## Install (first time on macOS)
 
-Requires **macOS 11+** and the **Xcode Command Line Tools** (`xcode-select --install`).
+You need **macOS 11 (Big Sur) or newer**.
 
+### Option A — Download the prebuilt app
+
+1. Go to the latest release:
+   https://github.com/engalialbyati/Image-view-Pro/releases/latest
+2. Under **Assets**, download **`ImageViewerPro-macOS-<version>.zip`**.
+3. Unzip it (double-click). You get **`ImageViewerPro.app`**.
+4. Drag `ImageViewerPro.app` into **`/Applications`** (or wherever you like).
+
+> The app is **not code-signed or notarized** (it's built from source, not an
+> Apple Developer ID build). The first time you open it, macOS Gatekeeper will
+> stop it. Open it with one of these:
+
+**Easy way (Finder):**
+1. In Finder, locate `ImageViewerPro.app`.
+2. **Right-click** (or Control-click) it → choose **Open**.
+3. In the “cannot be opened” dialog, click **Open** again. You only have to do this once.
+
+**Terminal way (removes the quarantine flag for everyone on this Mac):**
 ```sh
-cd macos
+xattr -dr com.apple.quarantine /Applications/ImageViewerPro.app
+```
+Then double-click the app normally.
+
+### Option B — Build from source
+
+Requires the **Xcode Command Line Tools**:
+```sh
+xcode-select --install   # if you don't have them yet
+```
+Then:
+```sh
+git clone https://github.com/engalialbyati/Image-view-Pro.git
+cd Image-view-Pro/macos
 make
 open build/ImageViewerPro.app
 ```
+A locally-built copy is already trusted by Gatekeeper, so no “Open Anyway” step
+is needed.
 
-The Makefile produces `build/ImageViewerPro.app` (a normal `.app` bundle).
+### Verifying it runs
 
-## Run
+Launch it → **File → Open…** (⌘O), or drag an image onto the window. Use
+**← / →** to move through the folder, **R / ⇧R** to rotate, scroll/pinch to
+zoom, and click-drag to pan when zoomed in.
+
+## Continuous builds
+
+Every push that changes `core/` or `macos/` triggers a fresh macOS build on
+GitHub Actions, and the `.app` is uploaded as a workflow artifact:
+https://github.com/engalialbyati/Image-view-Pro/actions
+(download the latest “Build (macOS)” run → “ImageViewerPro-macOS”). Useful if you
+want a bleeding-edge build between releases.
+
+---
+
+## Shortcuts
 
 - **File → Open…** (⌘O) or **drag an image onto the window**.
 - **← / →** previous / next image in the folder.
