@@ -36,7 +36,7 @@ Write-Output 'Compiling...'
     'main.cpp' 'app.res' `
     -o $out `
     -lgdiplus -lcomctl32 -lole32 -loleaut32 -luuid `
-    -lshell32 -lshlwapi -luser32 -lgdi32 -lcomdlg32 -lmsimg32 -ldwmapi -lwindowscodecs
+    -lshell32 -lshlwapi -luser32 -lgdi32 -lcomdlg32 -lmsimg32 -ldwmapi -lwindowscodecs -lurlmon
 if ($LASTEXITCODE -ne 0) { throw 'g++ compile failed' }
 
 Remove-Item -LiteralPath 'app.res' -Force -ErrorAction SilentlyContinue

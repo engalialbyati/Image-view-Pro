@@ -13,6 +13,7 @@
 #include <dwmapi.h>
 #include <objbase.h>
 #include <wincodec.h>
+#include <urlmon.h>
 #include <gdiplus.h>
 
 #include <string>
@@ -51,6 +52,7 @@
 #define ID_UNDO        1019
 #define ID_SCAN        1020
 #define ID_CROPPERSP   1021
+#define ID_UPDATE      1023
 #define IDC_EDITNAME   2001
 #define IDC_CHECKSEL   2002
 
@@ -101,6 +103,11 @@ static const WCHAR* const g_imageExts[] = {
     L".jpg", L".jpeg", L".jpe", L".jfif", L".png", L".gif", L".bmp", L".dib",
     L".tif", L".tiff", L".webp", L".svg", L".ico", L".heic", L".heif", L".wmf", L".emf"
 };
+
+static const WCHAR* const APP_VERSION  = L"1.1.0";
+static const WCHAR* const GH_API       = L"https://api.github.com/repos/engalialbyati/Image-view-Pro/releases/latest";
+static const WCHAR* const GH_RELEASES  = L"https://github.com/engalialbyati/Image-view-Pro/releases";
+static std::wstring g_updTag, g_updUrl;
 
 static const Gdiplus::Color C_BG(255, 16, 16, 24);
 static const Gdiplus::Color C_BAR(255, 26, 26, 38);
@@ -304,6 +311,9 @@ static void EnterCropRect();
 static void EnterCropPersp();
 static void DispatchAction(int act);
 static void OpenSettings();
+static void CheckForUpdatesNow();
+static DWORD WINAPI AutoUpdateThread(LPVOID);
+static bool RunUpdate(const std::wstring& url);
 static void LoadHotkeys();
 static void SaveHotkeys();
 static void UpdateMenuHotkeys();
@@ -1567,6 +1577,7 @@ static void OnCommand(WPARAM wp, LPARAM lp) {
         case ID_SHOWFOLDER: if (!g_path.empty()) ShellExecuteW(g_hMain, L"open", g_dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case ID_EXIT:  PostMessageW(g_hMain, WM_CLOSE, 0, 0); break;
         case ID_RENAME: StartEdit(); break;
+        case ID_UPDATE: CheckForUpdatesNow(); break;
         case ID_ABOUT: MessageBoxW(g_hMain,
             L"Image Viewer Pro\n\nOpen, rename, rotate, crop, scan, undo and copy/cut images.\n\nEdit > Set Hotkeys to customize all shortcuts.",
             L"About", MB_OK | MB_ICONINFORMATION); break;
@@ -1614,6 +1625,7 @@ static HMENU BuildMenu() {
     AppendMenuW(mb, MF_POPUP, (UINT_PTR)mView, L"&View");
 
     HMENU mHelp = CreatePopupMenu();
+    AppendMenuW(mHelp, MF_STRING, ID_UPDATE, L"Check for &Updates...");
     AppendMenuW(mHelp, MF_STRING, ID_ABOUT, L"&About");
     AppendMenuW(mb, MF_POPUP, (UINT_PTR)mHelp, L"&Help");
     return mb;
@@ -1735,9 +1747,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSEWHEEL: {
             if (g_bmp && GET_WHEEL_DELTA_WPARAM(wp) != 0) {
                 int d = GET_WHEEL_DELTA_WPARAM(wp);
-                if (d > 0) g_zoom *= 1.15; else g_zoom /= 1.15;
-                if (g_zoom > 40) g_zoom = 40; if (g_zoom < 0.05) g_zoom = 0.05;
-                InvalidateRect(hWnd, nullptr, FALSE); UpdateStatus();
+                ZoomBy(d > 0 ? 1.15 : 1.0 / 1.15);
             }
             return 0;
         }
@@ -1755,6 +1765,21 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
             MINMAXINFO* m = (MINMAXINFO*)lp;
             m->ptMinTrackSize.x = DPI(820);
             m->ptMinTrackSize.y = DPI(540);
+            return 0;
+        }
+        case WM_TIMER:
+            if (wp == 2) {
+                KillTimer(hWnd, 2);
+                HANDLE h = CreateThread(nullptr, 0, AutoUpdateThread, nullptr, 0, nullptr);
+                if (h) CloseHandle(h);
+            }
+            return 0;
+        case WM_APP + 1: {
+            std::wstring msg = L"A new version is available: " + g_updTag + L"\nCurrent: v" + APP_VERSION + L"\n\nDownload and install now?";
+            if (MessageBoxW(hWnd, msg.c_str(), L"Update available", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                if (g_updUrl.empty()) ShellExecuteW(nullptr, L"open", GH_RELEASES, nullptr, nullptr, SW_SHOWNORMAL);
+                else if (!RunUpdate(g_updUrl)) MessageBoxW(hWnd, L"Download failed. You can update manually from the Releases page.", L"Update", MB_OK | MB_ICONERROR);
+            }
             return 0;
         }
         case WM_DESTROY:
@@ -1887,6 +1912,85 @@ static void OpenSettings() {
     UpdateWindow(g_hSettings);
 }
 
+static bool ParseVersion(const std::wstring& s, int& a, int& b, int& c) {
+    a = b = c = 0; int n = 0, val = 0; bool any = false;
+    for (size_t i = 0; i < s.size(); i++) {
+        wchar_t ch = s[i];
+        if (ch >= L'0' && ch <= L'9') { val = val * 10 + (ch - L'0'); any = true; }
+        else { if (any) { if (n == 0) a = val; else if (n == 1) b = val; else if (n == 2) c = val; n++; if (n >= 3) return true; val = 0; any = false; } }
+    }
+    if (any) { if (n == 0) a = val; else if (n == 1) b = val; else c = val; }
+    return true;
+}
+static bool IsNewer(const std::wstring& tag) {
+    int a1, b1, c1, a2, b2, c2;
+    ParseVersion(tag, a1, b1, c1);
+    ParseVersion(APP_VERSION, a2, b2, c2);
+    if (a1 != a2) return a1 > a2;
+    if (b1 != b2) return b1 > b2;
+    return c1 > c2;
+}
+static bool FetchText(const std::wstring& url, std::wstring& out) {
+    WCHAR tmp[MAX_PATH]; if (!GetTempPathW(MAX_PATH, tmp)) return false;
+    std::wstring p = std::wstring(tmp) + L"ivp_release.json";
+    DeleteFileW(p.c_str());
+    if (FAILED(URLDownloadToFileW(nullptr, url.c_str(), p.c_str(), 0, nullptr))) return false;
+    HANDLE h = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD sz = GetFileSize(h, nullptr);
+    std::string raw(sz, 0); DWORD rd = 0; ReadFile(h, &raw[0], sz, &rd, nullptr); CloseHandle(h);
+    DeleteFileW(p.c_str());
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, raw.c_str(), (int)raw.size(), nullptr, 0);
+    out.resize(wlen);
+    MultiByteToWideChar(CP_UTF8, 0, raw.c_str(), (int)raw.size(), &out[0], wlen);
+    return true;
+}
+static bool FetchLatest(std::wstring& tag, std::wstring& dl) {
+    std::wstring json;
+    if (!FetchText(GH_API, json)) return false;
+    size_t p = json.find(L"\"tag_name\"");
+    if (p == std::wstring::npos) return false;
+    size_t c1 = json.find(L'"', json.find(L':', p));
+    size_t c2 = json.find(L'"', c1 + 1);
+    if (c1 == std::wstring::npos || c2 == std::wstring::npos) return false;
+    tag = json.substr(c1 + 1, c2 - c1 - 1);
+    size_t a = 0;
+    while ((a = json.find(L"\"browser_download_url\"", a)) != std::wstring::npos) {
+        size_t d1 = json.find(L'"', a + 22), d2 = json.find(L'"', d1 + 1);
+        if (d1 == std::wstring::npos || d2 == std::wstring::npos) break;
+        std::wstring u = json.substr(d1 + 1, d2 - d1 - 1);
+        if (u.find(L".exe") != std::wstring::npos && u.find(L"Setup") != std::wstring::npos) { dl = u; break; }
+        a = d2;
+    }
+    return true;
+}
+static bool RunUpdate(const std::wstring& url) {
+    WCHAR tmp[MAX_PATH]; if (!GetTempPathW(MAX_PATH, tmp)) return false;
+    std::wstring dst = std::wstring(tmp) + L"IVP-Setup-update.exe";
+    DeleteFileW(dst.c_str());
+    if (FAILED(URLDownloadToFileW(nullptr, url.c_str(), dst.c_str(), 0, nullptr))) return false;
+    ShellExecuteW(nullptr, L"open", dst.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    PostMessageW(g_hMain, WM_CLOSE, 0, 0);
+    return true;
+}
+static DWORD WINAPI AutoUpdateThread(LPVOID) {
+    std::wstring tag, dl;
+    if (FetchLatest(tag, dl) && IsNewer(tag)) {
+        g_updTag = tag; g_updUrl = dl;
+        PostMessageW(g_hMain, WM_APP + 1, 0, 0);
+    }
+    return 0;
+}
+static void CheckForUpdatesNow() {
+    std::wstring tag, dl;
+    if (!FetchLatest(tag, dl)) { MessageBoxW(g_hMain, L"Could not reach GitHub, or no release has been published yet.", L"Update", MB_OK | MB_ICONINFORMATION); return; }
+    if (!IsNewer(tag)) { std::wstring m = L"You're up to date (v" + std::wstring(APP_VERSION) + L")."; MessageBoxW(g_hMain, m.c_str(), L"Update", MB_OK | MB_ICONINFORMATION); return; }
+    std::wstring msg = L"A new version is available: " + tag + L"\nCurrent: v" + APP_VERSION + L"\n\nDownload and install now?";
+    if (MessageBoxW(g_hMain, msg.c_str(), L"Update available", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (dl.empty()) { ShellExecuteW(nullptr, L"open", GH_RELEASES, nullptr, nullptr, SW_SHOWNORMAL); return; }
+    if (!RunUpdate(dl)) MessageBoxW(g_hMain, L"Download failed. You can update manually from the Releases page.", L"Update", MB_OK | MB_ICONERROR);
+}
+
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_hInst = hInstance;
 
@@ -1936,6 +2040,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     ShowWindow(g_hMain, nCmdShow);
     UpdateWindow(g_hMain);
+    SetTimer(g_hMain, 2, 2500, nullptr);
 
     if (!g_openOnStart.empty()) LoadImageFromPath(g_openOnStart);
 

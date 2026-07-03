@@ -43,6 +43,16 @@ VIAddVersionKey "LegalCopyright" "${PUB}"
   DeleteRegValue HKLM "Software\Classes\.${EXT}\OpenWithProgids" "${PROGID}"
 !macroend
 
+Function .onInit
+  loop:
+    FindWindow $0 "ImageViewerProMain" ""
+    StrCmp $0 0 done
+    SendMessage $0 0x0010 0 0
+    Sleep 800
+    Goto loop
+  done:
+FunctionEnd
+
 Section "Install"
   SectionIn RO
   SetShellVarContext all
