@@ -54,6 +54,8 @@
 #define ID_CROPPERSP   1021
 #define ID_EDIT        1022
 #define ID_UPDATE      1023
+#define ID_REDO        1024
+#define ID_EVENTLOG    1025
 #define IDC_ADJLBL     5000
 #define IDC_ADJVAL     5100
 #define IDC_ADJTRK     5200
@@ -78,7 +80,7 @@
 
 enum { ACT_RENAME, ACT_SELECT, ACT_SELECTALL, ACT_CLEARSEL, ACT_COPY, ACT_CUT,
        ACT_ROTATER, ACT_ROTATEL, ACT_PREV, ACT_NEXT, ACT_ZOOMIN, ACT_ZOOMOUT,
-       ACT_ZOOMFIT, ACT_CROP, ACT_CROPPERSP, ACT_SCAN, ACT_UNDO, ACT_EDIT, ACT_OPEN, ACT_SAVE, ACT_COUNT };
+       ACT_ZOOMFIT, ACT_CROP, ACT_CROPPERSP, ACT_SCAN, ACT_UNDO, ACT_REDO, ACT_EDIT, ACT_OPEN, ACT_SAVE, ACT_COUNT };
 
 struct Hotkey { const WCHAR* name; UINT vk; bool ctrl; bool shift; bool alt; };
 
@@ -100,6 +102,7 @@ static const Hotkey g_defaultHotkeys[ACT_COUNT] = {
     { L"Crop (Perspective)", 'C',          false, true,  false },
     { L"Scan (Document)",   'Z',           false, false, false },
     { L"Undo",              'Z',           true,  false, false },
+    { L"Redo",              'Y',           true,  false, false },
     { L"Edit Photo",        'E',           false, false, false },
     { L"Open",              'O',           true,  false, false },
     { L"Save",              'S',           true,  false, false },
@@ -140,7 +143,10 @@ static HWND      g_hoverBtn = nullptr;
 static HMENU     g_hMenu = nullptr;
 
 static Gdiplus::Bitmap* g_bmp = nullptr;
-static std::vector<Gdiplus::Bitmap*> g_undoStack;
+struct HistEntry { Gdiplus::Bitmap* bmp; std::wstring label; };
+static std::vector<HistEntry> g_undoH, g_redoH;
+static std::vector<std::wstring> g_eventLog;
+static std::wstring g_eventLogText;
 
 static std::wstring g_path;
 static std::wstring g_dir;
@@ -196,6 +202,7 @@ static std::wstring g_openOnStart;
 
 static Hotkey g_hotkeys[ACT_COUNT];
 static HWND g_hSettings = nullptr;
+static HWND g_hEventLog = nullptr;
 static Hotkey g_work[ACT_COUNT];
 static int g_captureIdx = -1;
 static HWND g_hkBtn[ACT_COUNT];
@@ -326,6 +333,8 @@ static void DoRotate(bool right);
 static void DoCropApply();
 static void ZoomBy(double f);
 static void DoUndo();
+static void DoRedo();
+static void PushHistoryEntry(Gdiplus::Bitmap* snap, const std::wstring& label);
 static void EnterScanMode();
 static void AdjustScan(int delta);
 static void CommitScan();
@@ -340,6 +349,7 @@ static void ShowEditPanel(bool show);
 static void Layout();
 static void DispatchAction(int act);
 static void OpenSettings();
+static void OpenEventLog();
 static void CheckForUpdatesNow();
 static DWORD WINAPI AutoUpdateThread(LPVOID);
 static bool RunUpdate(const std::wstring& url);
@@ -395,9 +405,16 @@ static void RebuildFolderList() {
     g_selected.swap(kept);
 }
 
+static void AddEventLog(const std::wstring& msg) {
+    SYSTEMTIME st; GetLocalTime(&st);
+    WCHAR buf[32]; swprintf(buf, 32, L"%02d:%02d:%02d  ", st.wHour, st.wMinute, st.wSecond);
+    g_eventLog.push_back(std::wstring(buf) + msg);
+}
+
 static void ClearUndo() {
-    for (auto* b : g_undoStack) delete b;
-    g_undoStack.clear();
+    for (auto& h : g_undoH) delete h.bmp;
+    for (auto& h : g_redoH) delete h.bmp;
+    g_undoH.clear(); g_redoH.clear();
 }
 
 static void CloseImage() {
@@ -498,6 +515,8 @@ static bool LoadImageFromPath(const std::wstring& path) {
     SendMessageW(g_hEdit, EM_SETREADONLY, TRUE, 0);
 
     RebuildFolderList();
+    g_eventLog.clear();
+    AddEventLog(std::wstring(L"Opened: ") + PathFindFileNameW(path.c_str()));
     UpdateEditName();
     UpdateTitle();
     EnableButtons(true);
@@ -796,7 +815,9 @@ static void DrawCropOverlay(Gdiplus::Graphics* g) {
 static void DoRotate(bool right) {
     if (!g_bmp) return;
     Gdiplus::RotateFlipType t = right ? Gdiplus::Rotate90FlipNone : Gdiplus::Rotate270FlipNone;
-    if (g_bmp->RotateFlip(t) != Gdiplus::Ok) return;
+    Gdiplus::Bitmap* snap = MakeOwnedCopy(g_bmp);
+    if (g_bmp->RotateFlip(t) != Gdiplus::Ok) { delete snap; return; }
+    if (snap) PushHistoryEntry(snap, right ? L"Rotate right" : L"Rotate left");
     g_cropping = false; g_zoom = 1.0; g_dirty = true;
     RebuildDisplayCache();
     DoSave();
@@ -810,7 +831,7 @@ static void DoCropApply() {
         double quad[4][2];
         for (int i = 0; i < 4; i++) { quad[i][0] = g_cropCorners[i][0]; quad[i][1] = g_cropCorners[i][1]; }
         Gdiplus::Bitmap* nb = WarpPerspective(g_bmp, quad);
-        if (nb) { g_undoStack.push_back(g_bmp); g_bmp = nb; g_dirty = true; }
+        if (nb) { PushHistoryEntry(g_bmp, L"Perspective crop"); g_bmp = nb; g_dirty = true; }
     } else {
         double minx = (std::min)(g_rcX0, g_rcX1), maxx = (std::max)(g_rcX0, g_rcX1);
         double miny = (std::min)(g_rcY0, g_rcY1), maxy = (std::max)(g_rcY0, g_rcY1);
@@ -820,7 +841,7 @@ static void DoCropApply() {
         if (x + w > W) w = W - x; if (y + h > H) h = H - y;
         if (w > 1 && h > 1) {
             Gdiplus::Bitmap* nb = g_bmp->Clone(x, y, w, h, g_bmp->GetPixelFormat());
-            if (nb) { g_undoStack.push_back(g_bmp); g_bmp = nb; g_dirty = true; }
+            if (nb) { PushHistoryEntry(g_bmp, L"Crop"); g_bmp = nb; g_dirty = true; }
         }
     }
     g_cropping = false; g_perspCrop = false; g_dragCorner = -1; g_zoom = 1.0;
@@ -831,15 +852,34 @@ static void DoCropApply() {
 }
 
 static void DoUndo() {
-    if (g_undoStack.empty()) { g_sLeft = L"Nothing to undo"; InvalidateChrome(); return; }
-    delete g_bmp;
-    g_bmp = g_undoStack.back();
-    g_undoStack.pop_back();
+    if (g_undoH.empty()) { g_sLeft = L"Nothing to undo"; InvalidateChrome(); return; }
+    HistEntry e = g_undoH.back(); g_undoH.pop_back();
+    g_redoH.push_back({ g_bmp, e.label });
+    g_bmp = e.bmp;
     g_dirty = true; g_zoom = 1.0; g_cropping = false;
+    AddEventLog(L"Undo: " + e.label);
     RebuildDisplayCache();
     DoSave();
     InvalidateRect(g_hMain, nullptr, FALSE);
     UpdateStatus();
+}
+static void DoRedo() {
+    if (g_redoH.empty()) { g_sLeft = L"Nothing to redo"; InvalidateChrome(); return; }
+    HistEntry e = g_redoH.back(); g_redoH.pop_back();
+    g_undoH.push_back({ g_bmp, e.label });
+    g_bmp = e.bmp;
+    g_dirty = true; g_zoom = 1.0; g_cropping = false;
+    AddEventLog(L"Redo: " + e.label);
+    RebuildDisplayCache();
+    DoSave();
+    InvalidateRect(g_hMain, nullptr, FALSE);
+    UpdateStatus();
+}
+static void PushHistoryEntry(Gdiplus::Bitmap* snap, const std::wstring& label) {
+    g_undoH.push_back({ snap, label });
+    for (auto& h : g_redoH) delete h.bmp;
+    g_redoH.clear();
+    AddEventLog(label);
 }
 
 static void ComputeScanFull(INT W, INT H, const std::vector<unsigned char>& baseBuf, std::vector<unsigned char>& fullBuf) {
@@ -944,7 +984,7 @@ static void AdjustScan(int delta) {
 }
 static void CommitScan() {
     if (!g_scanMode) return;
-    g_undoStack.push_back(g_scanBase);
+    PushHistoryEntry(g_scanBase, L"Scan");
     g_scanBase = nullptr;
     g_scanBaseBuf.clear();
     g_scanBaseBuf.shrink_to_fit();
@@ -1154,7 +1194,7 @@ static void ApplyEdit() {
         Gdiplus::BitmapData dd = {}; nb->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &dd);
         for (int y = 0; y < H; y++) memcpy((BYTE*)dd.Scan0 + (size_t)y * dd.Stride, out.data() + (size_t)y * W * 4, (size_t)W * 4);
         nb->UnlockBits(&dd);
-        g_undoStack.push_back(g_editBase);
+        PushHistoryEntry(g_editBase, L"Adjust photo");
         delete g_bmp; g_bmp = nb;
     }
     g_editBase = nullptr;
@@ -1361,6 +1401,7 @@ static void DispatchAction(int act) {
         case ACT_EDIT:      EnterEditMode(); break;
         case ACT_SCAN:      EnterScanMode(); break;
         case ACT_UNDO:      DoUndo(); break;
+        case ACT_REDO:      DoRedo(); break;
         case ACT_OPEN:      DoOpen(); break;
         case ACT_SAVE:      DoSave(); break;
     }
@@ -1427,6 +1468,7 @@ static void UpdateMenuHotkeys() {
         { ID_SAVE,   ACT_SAVE,    L"&Save" },
         { ID_RENAME, ACT_RENAME,  L"&Rename" },
         { ID_UNDO,   ACT_UNDO,    L"&Undo Edit" },
+        { ID_REDO,   ACT_REDO,    L"&Redo Edit" },
         { ID_SELALL, ACT_SELECTALL, L"Select &All" },
         { ID_SELCLR, ACT_CLEARSEL, L"&Clear Selection" },
         { ID_ROTL,   ACT_ROTATEL, L"Rotate &Left" },
@@ -1855,6 +1897,8 @@ static void OnCommand(WPARAM wp, LPARAM lp) {
         case ID_ROTR:  DoRotate(true); break;
         case ID_SCAN:  EnterScanMode(); break;
         case ID_UNDO:  DoUndo(); break;
+        case ID_REDO:  DoRedo(); break;
+        case ID_EVENTLOG: OpenEventLog(); break;
         case ID_SETTINGS: OpenSettings(); break;
         case ID_CROP:      EnterCropRect(); break;
         case ID_CROPPERSP: EnterCropPersp(); break;
@@ -1893,6 +1937,9 @@ static HMENU BuildMenu() {
     HMENU mEdit = CreatePopupMenu();
     AppendMenuW(mEdit, MF_STRING, ID_RENAME, L"&Rename");
     AppendMenuW(mEdit, MF_STRING, ID_UNDO, L"&Undo Edit");
+    AppendMenuW(mEdit, MF_STRING, ID_REDO, L"&Redo Edit");
+    AppendMenuW(mEdit, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(mEdit, MF_STRING, ID_EVENTLOG, L"Event &Log...");
     AppendMenuW(mEdit, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(mEdit, MF_STRING, ID_SELALL, L"Select &All");
     AppendMenuW(mEdit, MF_STRING, ID_SELCLR, L"&Clear Selection");
@@ -2306,6 +2353,54 @@ static void CheckForUpdatesNow() {
     if (!RunUpdate(dl)) MessageBoxW(g_hMain, L"Download failed. You can update manually from the Releases page.", L"Update", MB_OK | MB_ICONERROR);
 }
 
+static LRESULT CALLBACK EventLogWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | LBS_STANDARD | WS_VSCROLL, 0, 0, 10, 10, h, (HMENU)1, g_hInst, nullptr);
+            SendMessageW(ed, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            HWND ok = CreateWindowW(L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 0, 0, 10, 10, h, (HMENU)2, g_hInst, nullptr);
+            SendMessageW(ok, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            return 0;
+        }
+        case WM_SIZE: {
+            RECT rc; GetClientRect(h, &rc);
+            int bh = DPI(30);
+            MoveWindow(GetDlgItem(h, 1), DPI(10), DPI(10), rc.right - DPI(20), rc.bottom - bh - DPI(20), TRUE);
+            MoveWindow(GetDlgItem(h, 2), rc.right - DPI(100) - DPI(10), rc.bottom - bh - DPI(5), DPI(100), bh, TRUE);
+            return 0;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wp) == 2) PostMessageW(h, WM_CLOSE, 0, 0);
+            return 0;
+        case WM_CLOSE:
+            EnableWindow(g_hMain, TRUE); SetForegroundWindow(g_hMain); g_hEventLog = nullptr; DestroyWindow(h);
+            return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+static void OpenEventLog() {
+    if (g_hEventLog) { SetFocus(g_hEventLog); return; }
+    static bool reg = false;
+    if (!reg) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc = EventLogWndProc; wc.hInstance = g_hInst;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"IVPEventLog";
+        RegisterClassExW(&wc); reg = true;
+    }
+    g_hEventLog = CreateWindowExW(0, L"IVPEventLog", L"Event Log",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, DPI(460), DPI(420),
+        g_hMain, nullptr, g_hInst, nullptr);
+    g_eventLogText.clear();
+    HWND lb = GetDlgItem(g_hEventLog, 1);
+    SendMessageW(lb, LB_RESETCONTENT, 0, 0);
+    for (auto it = g_eventLog.rbegin(); it != g_eventLog.rend(); ++it) SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)it->c_str());
+    if (g_eventLog.empty()) SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"(no actions yet in this session)");
+    EnableWindow(g_hMain, FALSE);
+    ShowWindow(g_hEventLog, SW_SHOW); UpdateWindow(g_hEventLog);
+}
+
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_hInst = hInstance;
 
@@ -2362,7 +2457,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
-        if (msg.message == WM_KEYDOWN && g_hSettings == nullptr) {
+        if (msg.message == WM_KEYDOWN && g_hSettings == nullptr && g_hEventLog == nullptr) {
             bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
