@@ -25,7 +25,7 @@
 - (void)viewDidChangeEffectiveAppearance { [self setNeedsDisplay:YES]; }
 
 - (void)drawRect:(NSRect)dirty {
-    [NSColor colorWithSRGBRed:0.051 green:0.055 blue:0.071 alpha:1.0 setFill];
+    [[NSColor colorWithSRGBRed:0.051 green:0.055 blue:0.071 alpha:1.0] setFill];
     NSRectFill(self.bounds);
 
     CGImageRef img = _document.displayImage;

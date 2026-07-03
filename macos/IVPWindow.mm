@@ -30,7 +30,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 - (CGFloat)contentHeight { return MAX(0, (CGFloat)self.document.selectionCount * _rowH); }
 - (void)drawRect:(NSRect)d {
     (void)d;
-    [NSColor colorWithSRGBRed:0.078 green:0.082 blue:0.106 alpha:1.0 setFill]; NSRectFill(self.bounds);
+    [[NSColor colorWithSRGBRed:0.078 green:0.082 blue:0.106 alpha:1.0] setFill]; NSRectFill(self.bounds);
     NSInteger n = (NSInteger)self.document.selectionCount;
     NSArray<NSURL *> *items = [self.document selectedURLsSorted];
     CGFloat s = 76, pad = (_rowH - s) / 2;
@@ -86,7 +86,7 @@ static NSButton *IVPMakeBtn(SEL action, id target, NSString *symbol, NSString *t
 @implementation IVPStatus
 - (instancetype)initWithFrame:(NSRect)r { if ((self=[super initWithFrame:r])) { _left=@""; _right=@""; } return self; }
 - (void)drawRect:(NSRect)d { (void)d;
-    [NSColor colorWithSRGBRed:0.063 green:0.067 blue:0.086 alpha:1.0 setFill]; NSRectFill(self.bounds);
+    [[NSColor colorWithSRGBRed:0.063 green:0.067 blue:0.086 alpha:1.0] setFill]; NSRectFill(self.bounds);
     [[NSColor colorWithWhite:1 alpha:0.07] setFill]; NSRectFill(NSMakeRect(0, 0, NSWidth(self.bounds), 1));
     NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:11],
                         NSForegroundColorAttributeName: [NSColor colorWithWhite:0.72 alpha:1]};
