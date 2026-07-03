@@ -131,7 +131,7 @@ static const WCHAR* const g_imageExts[] = {
     L".tif", L".tiff", L".webp", L".svg", L".ico", L".heic", L".heif", L".wmf", L".emf"
 };
 
-static const WCHAR* const APP_VERSION  = L"1.2.2";
+static const WCHAR* const APP_VERSION  = L"1.2.3";
 static const WCHAR* const GH_API       = L"https://api.github.com/repos/engalialbyati/Image-view-Pro/releases/latest";
 static const WCHAR* const GH_RELEASES  = L"https://github.com/engalialbyati/Image-view-Pro/releases";
 static std::wstring g_updTag, g_updUrl;
@@ -213,7 +213,7 @@ static HWND g_adjVal[ADJ_COUNT] = {0};
 static int g_panelW = 0;
 
 static double g_ox = 0, g_oy = 0, g_scale = 1;
-static HBITMAP g_dispCache = nullptr;
+static Gdiplus::Bitmap* g_dispCache = nullptr;
 static int g_cacheW = 0, g_cacheH = 0;
 static double g_panX = 0, g_panY = 0;
 static double g_baseOx = 0, g_baseOy = 0;
@@ -555,7 +555,7 @@ static void CloseImage() {
     g_path.clear(); g_dir.clear(); g_ext.clear();
     g_files.clear(); g_index = -1;
     g_dirty = false; g_cropping = false; g_perspCrop = false; g_zoom = 1.0;
-    if (g_dispCache) { DeleteObject(g_dispCache); g_dispCache = nullptr; }
+    if (g_dispCache) { delete g_dispCache; g_dispCache = nullptr; }
 }
 
 static Gdiplus::Bitmap* MakeOwnedCopy(Gdiplus::Bitmap* src) {
@@ -685,7 +685,7 @@ static void ZoomBy(double f) {
 }
 
 static void RebuildDisplayCache() {
-    if (g_dispCache) { DeleteObject(g_dispCache); g_dispCache = nullptr; }
+    if (g_dispCache) { delete g_dispCache; g_dispCache = nullptr; }
     g_cacheW = 0; g_cacheH = 0;
     if (!g_bmp) return;
     int cw = g_canvasW, ch = g_canvasH;
@@ -713,15 +713,13 @@ static void RebuildDisplayCache() {
     g_oy = g_baseOy + g_panY;
 
     // Render the scaled image once (image-sized); panning just repositions this cache.
-    Gdiplus::Bitmap cache(dw, dh, PixelFormat32bppARGB);
-    Gdiplus::Graphics gc(&cache);
+    Gdiplus::Bitmap* cache = new Gdiplus::Bitmap(dw, dh, PixelFormat32bppARGB);
+    Gdiplus::Graphics gc(cache);
     gc.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
     Gdiplus::SolidBrush bgf(C_CANVAS);
     gc.FillRectangle(&bgf, 0, 0, dw, dh);
     gc.DrawImage(g_bmp, Gdiplus::Rect(0, 0, dw, dh), 0, 0, iw, ih, Gdiplus::UnitPixel);
-    HBITMAP hb = nullptr;
-    cache.GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hb);
-    g_dispCache = hb;
+    g_dispCache = cache;
     g_cacheW = dw; g_cacheH = dh;
 }
 
@@ -2467,11 +2465,7 @@ static void Paint(HDC hdc) {
     g.FillRectangle(&bgBrush, g_selPanelW, top, cw, ch);
     g.SetClip(Gdiplus::Rect(g_selPanelW, g_canvasTop, g_canvasW, g_canvasH));
     if (g_bmp && g_dispCache) {
-        HDC cdc = CreateCompatibleDC(mem);
-        HBITMAP oldC = (HBITMAP)SelectObject(cdc, g_dispCache);
-        BitBlt(mem, (int)g_ox, (int)g_oy, g_cacheW, g_cacheH, cdc, 0, 0, SRCCOPY);
-        SelectObject(cdc, oldC);
-        DeleteDC(cdc);
+        g.DrawImage(g_dispCache, (INT)g_ox, (INT)g_oy);
 
         if (g_cropping) { if (g_perspCrop) DrawCropOverlay(&g); else DrawRectOverlay(&g); }
 
