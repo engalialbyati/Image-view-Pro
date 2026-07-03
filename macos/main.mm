@@ -53,6 +53,8 @@
     [fileMenu addItemWithTitle:@"Export Selected as PDF…" action:@selector(doPDF:) keyEquivalent:@""].target = self.window;
     [fileMenu addItemWithTitle:@"Move Selected to Trash" action:@selector(doDelete:) keyEquivalent:@""].target = self.window;
     [fileMenu addItem:NSMenuItem.separatorItem];
+    [fileMenu addItemWithTitle:@"Set as Default Image Viewer…" action:@selector(doSetDefault:) keyEquivalent:@""].target = self.window;
+    [fileMenu addItem:NSMenuItem.separatorItem];
     [fileMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
     fileItem.submenu = fileMenu;
 
@@ -64,6 +66,8 @@
     [editMenu addItemWithTitle:@"Select / Deselect" action:@selector(doSelect:) keyEquivalent:@"s"].target = self.window;
     [editMenu addItemWithTitle:@"Select All" action:@selector(doSelectAll:) keyEquivalent:@"a"].target = self.window;
     [editMenu addItemWithTitle:@"Clear Selection" action:@selector(doClearSel:) keyEquivalent:@"d"].target = self.window;
+    [editMenu addItem:NSMenuItem.separatorItem];
+    [editMenu addItemWithTitle:@"Event Log…" action:@selector(doEventLog:) keyEquivalent:@""].target = self.window;
     editItem.submenu = editMenu;
 
     NSMenuItem *imgItem = [main addItemWithTitle:@"Image" action:nil keyEquivalent:@""];

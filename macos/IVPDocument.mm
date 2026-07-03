@@ -2,6 +2,7 @@
 #import "IVPDocument.h"
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreServices/CoreServices.h>
 #include <cstring>
 
 static NSArray<NSString *> *IVPImageExts() {
@@ -94,6 +95,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     BOOL _editing; ivp::ImageBuf _editBase, _editSmall; int _editSW, _editSH; int _adjVals[12];
     BOOL _scanning; ivp::ImageBuf _scanBase, _scanFull; int _scanLevel;
     BOOL _cropping, _perspCrop; double _corners[4][2]; double _rcX0,_rcY0,_rcX1,_rcY1;
+    NSMutableArray<NSString *> *_eventLog;
 }
 @property (nonatomic, strong) NSMutableArray<NSURL *> *files;
 @property (nonatomic) NSInteger index;
@@ -110,6 +112,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
         _thumbCache = [NSCache new];
         _thumbCache.countLimit = 400;
         _index = -1;
+        _eventLog = [NSMutableArray array];
         _editing = NO; _scanning = NO; _cropping = NO; _perspCrop = NO; _scanLevel = 70;
         for (int i = 0; i < 12; i++) _adjVals[i] = 0;
         for (int i = 0; i < 4; i++) { _corners[i][0] = 0; _corners[i][1] = 0; }
@@ -117,6 +120,13 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     return self;
 }
 - (void)dealloc { if (_display) CGImageRelease(_display); }
+
+- (void)log:(NSString *)msg {
+    NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"HH:mm:ss";
+    NSString *entry = [NSString stringWithFormat:@"%@  %@", [df stringFromDate:[NSDate date]], msg];
+    [_eventLog insertObject:entry atIndex:0];
+}
+- (NSArray<NSString *> *)eventLog { return [_eventLog copy]; }
 
 - (BOOL)hasImage { return _work.valid(); }
 - (int)imageW { return _work.w; }
@@ -165,6 +175,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     ivp::ImageBuf b = LoadImageBufFromURL(url);
     _work = b;
     _undo.clear(); _redo.clear(); _undoLabel.clear();
+    [self log:[NSString stringWithFormat:@"Opened: %@", url.lastPathComponent]];
     [self refreshDisplay];
 }
 
@@ -190,6 +201,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
     _undo.push_back(snap);
     _undoLabel.push_back(lbl ? std::string(lbl) : "");
     _redo.clear();
+    if (lbl) [self log:[NSString stringWithUTF8String:lbl]];
 }
 - (void)rotateRight {
     if (!_work.valid()) return;
@@ -205,6 +217,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
 }
 - (void)undo {
     if (_undo.empty()) return;
+    [self log:@"Undo"];
     _redo.push_back(_work);
     ivp::ImageBuf e = _undo.back(); _undo.pop_back(); _undoLabel.pop_back();
     _work = e;
@@ -212,6 +225,7 @@ static bool EncodeJPEGBytes(const ivp::ImageBuf &src, std::vector<uint8_t> &out)
 }
 - (void)redo {
     if (_redo.empty()) return;
+    [self log:@"Redo"];
     _undo.push_back(_work); _undoLabel.push_back("redo");
     ivp::ImageBuf e = _redo.back(); _redo.pop_back();
     _work = e;
@@ -380,6 +394,24 @@ static ivp::ImageBuf BlendScan(const ivp::ImageBuf &b, const ivp::ImageBuf &f, d
 }
 - (void)cancelCrop { _cropping = NO; _perspCrop = NO; [_delegate documentDidChange:self]; }
 
+- (void)registerAsViewer {
+    // Re-register this app with Launch Services so it shows up in "Open With",
+    // then open the system Default Applications settings (user still picks it).
+    NSString *appPath = [[NSBundle mainBundle] bundlePath];
+    if (appPath) {
+        NSURL *appURL = [NSURL fileURLWithPath:appPath];
+        OSStatus st = LSRegisterURL((__bridge CFURLRef)appURL, true);
+        (void)st;
+    }
+    [self log:@"Registered as image viewer"];
+    NSURL *settings = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.Defaults-Settings.extension"];
+    [[NSWorkspace sharedWorkspace] openURL:settings];
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"Registered Image Viewer Pro";
+    a.informativeText = @"Opening Default Apps settings — choose Image Viewer Pro for images.";
+    [a runModal];
+}
+
 - (NSImage *)thumbnailForURL:(NSURL *)url maxSize:(CGFloat)s {
     NSImage *cached = [_thumbCache objectForKey:url];
     if (cached) return cached;
@@ -456,6 +488,7 @@ static ivp::ImageBuf BlendScan(const ivp::ImageBuf &b, const ivp::ImageBuf &f, d
         NSAlert *a = [NSAlert new]; a.messageText = @"PDF export failed."; [a runModal];
         return NO;
     }
+    [self log:[NSString stringWithFormat:@"Exported %lu page(s) to PDF", (unsigned long)pages.size()]];
     NSAlert *a = [NSAlert new];
     a.messageText = [NSString stringWithFormat:@"Exported %lu page%@ to PDF.",
                      (unsigned long)pages.size(), pages.size() == 1 ? @"" : @"s"];

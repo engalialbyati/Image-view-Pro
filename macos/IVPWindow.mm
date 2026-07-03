@@ -262,6 +262,22 @@ static NSArray<NSString *> *IVPAdjNames() {
 - (void)doScanCommit:(id)s { (void)s; [_document commitScan]; }
 - (void)doScanCancel:(id)s { (void)s; [_document cancelScan]; }
 - (void)doResetAdjust:(id)s { (void)s; [_document resetAdjust]; [self syncAdjustUI]; }
+- (void)doEventLog:(id)s { (void)s;
+    NSPanel *p = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,480,440)
+        styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable)
+        backing:NSBackingStoreBuffered defer:NO];
+    p.title = @"Event Log";
+    p.releasedWhenClosed = NO;
+    NSScrollView *sv = [[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,480,440)];
+    sv.hasVerticalScroller = YES; sv.autohidesScrollers = YES;
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0,0,460,420)];
+    tv.editable = NO; tv.drawsBackground = YES; tv.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    tv.string = [[_document eventLog] componentsJoinedByString:@"\n"] ?: @"(no actions yet)";
+    sv.documentView = tv;
+    p.contentView = sv;
+    [p center]; [p makeKeyAndOrderFront:nil];
+}
+- (void)doSetDefault:(id)s { (void)s; [_document registerAsViewer]; }
 - (void)adjustSlider:(NSSlider *)s { NSInteger i = s.tag; [_document setAdjustValue:(int)i value:(int)s.intValue]; _adjValues[i].stringValue = [NSString stringWithFormat:@"%ld", (long)s.intValue]; }
 - (void)scanSlider:(NSSlider *)s { [_document setScanLevel:(int)s.intValue]; _scanVal.stringValue = [NSString stringWithFormat:@"%d%%", _document.scanLevel]; }
 - (void)syncAdjustUI {

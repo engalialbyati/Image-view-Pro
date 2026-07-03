@@ -35,6 +35,8 @@
 - (BOOL)isCurrentSelected;
 - (void)deleteSelection;               // to Trash
 - (BOOL)exportSelectionToPDF;          // prompts for save path
+- (NSArray<NSString *> *)eventLog;     // timestamped action history
+- (void)registerAsViewer;              // register with Launch Services + open Default Apps
 
 // Adjust photo (brightness/contrast/… sliders)
 @property (nonatomic, readonly) BOOL editing;
